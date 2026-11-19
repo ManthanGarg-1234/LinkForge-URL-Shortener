@@ -1,0 +1,1061 @@
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import {
+  Activity,
+  ArrowUpRight,
+  BarChart3,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Copy,
+  Download,
+  ExternalLink,
+  LayoutDashboard,
+  Link2,
+  LogOut,
+  Menu,
+  PauseCircle,
+  PlayCircle,
+  Plus,
+  QrCode,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+
+import QRCode from "qrcode";
+
+import { useAuth } from "../context/AuthContext.jsx";
+import { urlApi } from "../services/api.js";
+import AnalyticsPage from "./AnalyticsPage.jsx";
+
+const SHORT_URL_BASE = (
+  import.meta.env.VITE_SHORT_URL_BASE || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+function getShortUrl(item) {
+  return `${SHORT_URL_BASE}/${item.shortCode}`;
+}
+
+function getErrorMessage(error) {
+  return (
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    "Something went wrong. Please try again."
+  );
+}
+
+function formatDate(value) {
+  if (!value) return "Not available";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Not available";
+
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export default function AuthenticatedApp() {
+  const { user, logout } = useAuth();
+
+  const [activePage, setActivePage] = useState("overview");
+  const [links, setLinks] = useState([]);
+
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const [originalUrl, setOriginalUrl] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [copiedCode, setCopiedCode] = useState("");
+  const [actioningId, setActioningId] = useState("");
+
+  const [qrPreview, setQrPreview] = useState(null);
+
+  const loadLinks = useCallback(async (page = 1) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await urlApi.listShortUrls({
+        page,
+        limit: 10,
+      });
+
+      const data = response?.data ?? response;
+
+      const receivedLinks = Array.isArray(data?.urls)
+        ? data.urls
+        : Array.isArray(data?.items)
+          ? data.items
+          : [];
+
+      if (receivedLinks.length === 0 && page > 1) {
+        return await loadLinks(page - 1);
+      }
+
+      setLinks(receivedLinks);
+
+      setPagination(
+        data?.pagination ?? {
+          page,
+          limit: 10,
+          total: receivedLinks.length,
+          totalPages: 1,
+        },
+      );
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLinks(1);
+  }, [loadLinks]);
+
+  const filteredLinks = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+
+    if (!query) return links;
+
+    return links.filter((item) => {
+      return (
+        item.originalUrl?.toLowerCase().includes(query) ||
+        item.shortCode?.toLowerCase().includes(query)
+      );
+    });
+  }, [links, searchTerm]);
+
+  async function handleCreateLink(event) {
+    event.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    if (!originalUrl.trim()) {
+      setError("Enter a destination URL.");
+      return;
+    }
+
+    setCreating(true);
+
+    try {
+      const payload = {
+        originalUrl: originalUrl.trim(),
+      };
+
+      if (expiresAt) {
+        payload.expiresAt = new Date(expiresAt).toISOString();
+      }
+
+      await urlApi.createShortUrl(payload);
+
+      setOriginalUrl("");
+      setExpiresAt("");
+      setSuccess("Your short link has been created.");
+
+      await loadLinks(1);
+      setActivePage("links");
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleCopy(item) {
+    const shortUrl = getShortUrl(item);
+
+    try {
+      await navigator.clipboard.writeText(shortUrl);
+
+      setCopiedCode(item.shortCode);
+
+      window.setTimeout(() => {
+        setCopiedCode((current) =>
+          current === item.shortCode ? "" : current,
+        );
+      }, 1800);
+    } catch {
+      setError("Unable to copy. Check your browser clipboard permissions.");
+    }
+  }
+
+  async function handleShowQr(item) {
+    setError("");
+
+    setQrPreview({
+      item,
+      dataUrl: null,
+      loading: true,
+      error: "",
+    });
+
+    try {
+      const dataUrl = await QRCode.toDataURL(getShortUrl(item), {
+        width: 512,
+        margin: 2,
+        errorCorrectionLevel: "H",
+        color: {
+          dark: "#0B1020",
+          light: "#FFFFFF",
+        },
+      });
+
+      setQrPreview({
+        item,
+        dataUrl,
+        loading: false,
+        error: "",
+      });
+    } catch {
+      setQrPreview({
+        item,
+        dataUrl: null,
+        loading: false,
+        error: "Unable to generate the QR code. Please try again.",
+      });
+    }
+  }
+
+  async function handleToggleStatus(item) {
+    const nextStatus = !item.isActive;
+
+    setError("");
+    setSuccess("");
+    setActioningId(item.id);
+
+    try {
+      await urlApi.updateShortUrlStatus(item.id, nextStatus);
+
+      setLinks((currentLinks) =>
+        currentLinks.map((link) =>
+          link.id === item.id
+            ? { ...link, isActive: nextStatus }
+            : link,
+        ),
+      );
+
+      setSuccess(
+        nextStatus
+          ? "Short URL activated successfully."
+          : "Short URL deactivated successfully.",
+      );
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setActioningId("");
+    }
+  }
+
+  async function handleDeleteLink(item) {
+    const confirmed = window.confirm(
+      `Permanently delete this short URL?\n\n${getShortUrl(item)}\n\nThis action cannot be undone.`,
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setActioningId(item.id);
+
+    try {
+      await urlApi.deleteShortUrl(item.id);
+
+      setSuccess("Short URL deleted successfully.");
+
+      if (qrPreview?.item?.id === item.id) {
+        setQrPreview(null);
+      }
+
+      await loadLinks(pagination.page);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setActioningId("");
+    }
+  }
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    setError("");
+
+    try {
+      await logout();
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
+  function navigate(page) {
+    setActivePage(page);
+    setMobileMenuOpen(false);
+    setError("");
+    setSuccess("");
+  }
+
+  const navigation = [
+    {
+      id: "overview",
+      label: "Overview",
+      icon: LayoutDashboard,
+    },
+    {
+      id: "create",
+      label: "Create link",
+      icon: Plus,
+    },
+    {
+      id: "links",
+      label: "My links",
+      icon: Link2,
+    },
+    {
+      id: "analytics",
+      label: "Analytics",
+      icon: BarChart3,
+    },
+  ];
+
+  const pageTitles = {
+    overview: "Overview",
+    create: "Create a short link",
+    links: "My links",
+    analytics: "Analytics",
+  };
+
+  const qrItemExpired =
+    qrPreview?.item?.expiresAt &&
+    new Date(qrPreview.item.expiresAt).getTime() <= Date.now();
+
+  return (
+    <div className="min-h-screen bg-[#080c16] text-white">
+      {mobileMenuOpen && (
+        <button
+          aria-label="Close navigation"
+          onClick={() => setMobileMenuOpen(false)}
+          className="fixed inset-0 z-40 bg-black/70 lg:hidden"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-white/[0.07] bg-[#0b101d] transition-transform duration-300 ${
+          mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+        } lg:translate-x-0`}
+      >
+        <div className="flex h-20 items-center justify-between border-b border-white/[0.07] px-7">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-400/20 bg-blue-500/15 text-blue-400">
+              <Link2 size={22} />
+            </div>
+
+            <span className="text-xl font-bold tracking-tight">
+              Link<span className="text-blue-400">Forge</span>
+            </span>
+          </div>
+
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="text-zinc-400 lg:hidden"
+            aria-label="Close menu"
+          >
+            <X size={21} />
+          </button>
+        </div>
+
+        <div className="px-5 pt-8">
+          <p className="mb-4 px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">
+            Workspace
+          </p>
+
+          <nav className="space-y-2">
+            {navigation.map((item) => {
+              const Icon = item.icon;
+              const selected = activePage === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => navigate(item.id)}
+                  className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
+                    selected
+                      ? "border border-blue-400/15 bg-blue-500/10 text-blue-300"
+                      : "text-zinc-400 hover:bg-white/[0.04] hover:text-white"
+                  }`}
+                >
+                  <Icon size={19} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        <div className="mt-auto border-t border-white/[0.07] p-5">
+          <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.025] p-4">
+            <p className="text-xs text-zinc-500">Signed in as</p>
+
+            <p className="mt-2 truncate text-sm font-semibold text-white">
+              {user?.name || "LinkForge User"}
+            </p>
+
+            <p className="mt-1 truncate text-xs text-zinc-500">
+              {user?.email}
+            </p>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-zinc-400 transition hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+          >
+            <LogOut size={18} />
+            {loggingOut ? "Signing out..." : "Sign out"}
+          </button>
+        </div>
+      </aside>
+
+      <main className="min-h-screen lg:pl-72">
+        <header className="sticky top-0 z-30 flex h-20 items-center justify-between border-b border-white/[0.07] bg-[#080c16]/90 px-5 backdrop-blur-xl sm:px-8 lg:px-10">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="text-zinc-400 lg:hidden"
+              aria-label="Open menu"
+            >
+              <Menu size={23} />
+            </button>
+
+            <div>
+              <p className="text-sm font-semibold text-white">
+                {pageTitles[activePage] || "Overview"}
+              </p>
+
+              <p className="mt-1 text-xs text-zinc-500">
+                Manage your LinkForge workspace
+              </p>
+            </div>
+          </div>
+
+          <div className="hidden items-center gap-3 sm:flex">
+            <span className="rounded-full border border-emerald-400/15 bg-emerald-400/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300">
+              <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Account active
+            </span>
+
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-blue-400/20 bg-blue-500/10 text-sm font-bold text-blue-300">
+              {(user?.name || user?.email || "U")
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-7xl px-5 py-9 sm:px-8 lg:px-10">
+          {error && (
+            <div
+              role="alert"
+              className="mb-6 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+            >
+              {error}
+            </div>
+          )}
+
+          {success && (
+            <div
+              role="status"
+              className="mb-6 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
+            >
+              {success}
+            </div>
+          )}
+
+          {activePage === "overview" && (
+            <>
+              <div className="mb-9">
+                <p className="text-sm font-medium text-blue-400">
+                  YOUR LINK WORKSPACE
+                </p>
+
+                <h1 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+                  Welcome back{user?.name ? `, ${user.name}` : ""}.
+                </h1>
+
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+                  Create, organize, and manage your shortened URLs from one
+                  workspace.
+                </p>
+              </div>
+
+              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-400">
+                      Total links
+                    </span>
+
+                    <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400">
+                      <Link2 size={20} />
+                    </div>
+                  </div>
+
+                  <p className="mt-5 text-3xl font-bold tabular-nums">
+                    {pagination.total}
+                  </p>
+
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Links created in your account
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-400">
+                      Current page links
+                    </span>
+
+                    <div className="rounded-xl bg-violet-500/10 p-3 text-violet-400">
+                      <Activity size={20} />
+                    </div>
+                  </div>
+
+                  <p className="mt-5 text-3xl font-bold tabular-nums">
+                    {links.length}
+                  </p>
+
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Loaded from the URL service
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-zinc-400">
+                      Account role
+                    </span>
+
+                    <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-400">
+                      <Check size={20} />
+                    </div>
+                  </div>
+
+                  <p className="mt-5 text-3xl font-bold">
+                    {user?.role || "USER"}
+                  </p>
+
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Your current account permission
+                  </p>
+                </div>
+              </div>
+
+              <section className="mt-9 rounded-2xl border border-blue-400/15 bg-gradient-to-br from-blue-500/10 to-[#101725] p-7 sm:p-9">
+                <div className="max-w-2xl">
+                  <div className="mb-4 inline-flex rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1.5 text-xs font-medium text-blue-300">
+                    LINK MANAGEMENT
+                  </div>
+
+                  <h2 className="text-2xl font-bold">
+                    Make every link count.
+                  </h2>
+
+                  <p className="mt-3 text-sm leading-6 text-zinc-400">
+                    Turn long URLs into compact links that are easier to
+                    share and manage.
+                  </p>
+
+                  <button
+                    onClick={() => navigate("create")}
+                    className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-400"
+                  >
+                    <Plus size={18} />
+                    Create a short link
+                  </button>
+                </div>
+              </section>
+
+              <section className="mt-10">
+                <div className="mb-5 flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">Recent links</h2>
+
+                  <button
+                    onClick={() => navigate("links")}
+                    className="text-sm font-medium text-blue-400 hover:text-blue-300"
+                  >
+                    View all
+                  </button>
+                </div>
+
+                <LinkTable
+                  links={links.slice(0, 5)}
+                  loading={loading}
+                  onCopy={handleCopy}
+                  onShowQr={handleShowQr}
+                  onToggleStatus={handleToggleStatus}
+                  onDelete={handleDeleteLink}
+                  copiedCode={copiedCode}
+                  actioningId={actioningId}
+                />
+              </section>
+            </>
+          )}
+
+          {activePage === "create" && (
+            <section className="max-w-3xl">
+              <div className="mb-8">
+                <p className="text-sm font-medium text-blue-400">
+                  LINK CREATION
+                </p>
+
+                <h1 className="mt-3 text-3xl font-bold">
+                  Create a short link
+                </h1>
+
+                <p className="mt-3 text-sm text-zinc-400">
+                  Enter a destination URL and optionally set an expiration.
+                </p>
+              </div>
+
+              <form
+                onSubmit={handleCreateLink}
+                className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6 sm:p-8"
+              >
+                <label className="block">
+                  <span className="text-sm font-medium text-zinc-300">
+                    Destination URL
+                  </span>
+
+                  <input
+                    type="url"
+                    required
+                    maxLength={2048}
+                    value={originalUrl}
+                    onChange={(event) => setOriginalUrl(event.target.value)}
+                    placeholder="https://example.com/your-long-destination"
+                    className="mt-3 w-full rounded-xl border border-white/10 bg-[#090e19] px-4 py-4 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-blue-400/60 focus:ring-2 focus:ring-blue-400/10"
+                  />
+
+                  <span className="mt-2 block text-xs text-zinc-500">
+                    Only HTTP and HTTPS destination URLs are accepted.
+                  </span>
+                </label>
+
+                <label className="mt-7 block">
+                  <span className="text-sm font-medium text-zinc-300">
+                    Expiration date
+                    <span className="ml-2 text-xs text-zinc-600">
+                      Optional
+                    </span>
+                  </span>
+
+                  <input
+                    type="datetime-local"
+                    value={expiresAt}
+                    min={new Date(Date.now() + 60000)
+                      .toISOString()
+                      .slice(0, 16)}
+                    onChange={(event) => setExpiresAt(event.target.value)}
+                    className="mt-3 w-full rounded-xl border border-white/10 bg-[#090e19] px-4 py-4 text-sm text-white outline-none focus:border-blue-400/60"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="mt-8 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Plus size={18} />
+                  {creating ? "Creating link..." : "Generate short link"}
+                </button>
+              </form>
+            </section>
+          )}
+
+          {activePage === "links" && (
+            <section>
+              <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+                <div>
+                  <p className="text-sm font-medium text-blue-400">
+                    YOUR COLLECTION
+                  </p>
+
+                  <h1 className="mt-3 text-3xl font-bold">My links</h1>
+
+                  <p className="mt-3 text-sm text-zinc-400">
+                    {pagination.total} links in your account.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => navigate("create")}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-400"
+                >
+                  <Plus size={18} />
+                  Create link
+                </button>
+              </div>
+
+              <div className="mb-6 flex items-center gap-3 rounded-xl border border-white/10 bg-[#101725] px-4">
+                <Search size={19} className="shrink-0 text-zinc-500" />
+
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Search this page by URL or short code..."
+                  className="w-full bg-transparent py-4 text-sm text-white outline-none placeholder:text-zinc-600"
+                />
+
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm("")}
+                    className="text-zinc-500 hover:text-white"
+                    aria-label="Clear search"
+                  >
+                    <X size={17} />
+                  </button>
+                )}
+              </div>
+
+              <LinkTable
+                links={filteredLinks}
+                loading={loading}
+                onCopy={handleCopy}
+                onShowQr={handleShowQr}
+                onToggleStatus={handleToggleStatus}
+                onDelete={handleDeleteLink}
+                copiedCode={copiedCode}
+                actioningId={actioningId}
+              />
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+                <p className="text-xs text-zinc-500">
+                  Page {pagination.page} of{" "}
+                  {Math.max(1, pagination.totalPages)}
+                </p>
+
+                <div className="flex gap-2">
+                  <button
+                    disabled={loading || pagination.page <= 1}
+                    onClick={() => loadLinks(pagination.page - 1)}
+                    className="rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:bg-white/5 disabled:opacity-30"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft size={19} />
+                  </button>
+
+                  <button
+                    disabled={
+                      loading || pagination.page >= pagination.totalPages
+                    }
+                    onClick={() => loadLinks(pagination.page + 1)}
+                    className="rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:bg-white/5 disabled:opacity-30"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight size={19} />
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {activePage === "analytics" && <AnalyticsPage />}
+        </div>
+      </main>
+
+      {qrPreview && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm"
+          onClick={() => setQrPreview(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="qr-dialog-title"
+            className="my-auto w-full max-w-md rounded-2xl border border-white/10 bg-[#101725] p-6 shadow-2xl sm:p-8"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="mb-3 inline-flex rounded-xl bg-blue-500/10 p-3 text-blue-400">
+                  <QrCode size={22} />
+                </div>
+
+                <h2
+                  id="qr-dialog-title"
+                  className="text-xl font-bold text-white"
+                >
+                  QR code
+                </h2>
+
+                <p className="mt-1 text-sm text-zinc-400">
+                  Scan to open your short link.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setQrPreview(null)}
+                aria-label="Close QR code preview"
+                className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/5 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="mt-6 flex min-h-64 items-center justify-center rounded-2xl border border-white/10 bg-white p-5">
+              {qrPreview.loading && (
+                <p className="text-sm text-zinc-500">
+                  Generating QR code...
+                </p>
+              )}
+
+              {!qrPreview.loading && qrPreview.error && (
+                <p className="text-center text-sm text-red-600">
+                  {qrPreview.error}
+                </p>
+              )}
+
+              {!qrPreview.loading && qrPreview.dataUrl && (
+                <img
+                  src={qrPreview.dataUrl}
+                  alt={`QR code for ${getShortUrl(qrPreview.item)}`}
+                  className="h-auto w-full max-w-[256px] object-contain"
+                />
+              )}
+            </div>
+
+            <div className="mt-5 rounded-xl border border-white/[0.07] bg-[#0b101d] p-4">
+              <p className="break-all text-center text-sm font-medium text-blue-300">
+                {getShortUrl(qrPreview.item)}
+              </p>
+
+              <p className="mt-2 text-center text-xs text-zinc-500">
+                Code: {qrPreview.item.shortCode}
+              </p>
+            </div>
+
+            {(qrPreview.item.isActive === false || qrItemExpired) && (
+              <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs leading-5 text-amber-200">
+                {qrPreview.item.isActive === false &&
+                  "This short link is inactive. Activate it before sharing its QR code."}
+                {qrPreview.item.isActive === false &&
+                  qrItemExpired &&
+                  " "}
+                {qrItemExpired &&
+                  "This short link has expired. Its QR code will not provide a working redirect."}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setQrPreview(null)}
+                className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:bg-white/5"
+              >
+                Close
+              </button>
+
+              <a
+                href={qrPreview.dataUrl || undefined}
+                download={`linkforge-${qrPreview.item.shortCode}.png`}
+                aria-disabled={!qrPreview.dataUrl}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-400 ${
+                  !qrPreview.dataUrl
+                    ? "pointer-events-none opacity-40"
+                    : ""
+                }`}
+              >
+                <Download size={17} />
+                Download PNG
+              </a>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LinkTable({
+  links,
+  loading,
+  onCopy,
+  onShowQr,
+  onToggleStatus,
+  onDelete,
+  copiedCode,
+  actioningId,
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-10 text-center text-sm text-zinc-500">
+        Loading your links...
+      </div>
+    );
+  }
+
+  if (!links.length) {
+    return (
+      <div className="rounded-2xl border border-dashed border-white/10 bg-[#101725]/60 px-6 py-14 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
+          <Link2 size={25} />
+        </div>
+
+        <h3 className="mt-5 font-semibold text-white">No links found</h3>
+
+        <p className="mt-2 text-sm text-zinc-500">
+          Your created short links will appear here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#101725]">
+      <div className="divide-y divide-white/[0.06]">
+        {links.map((item) => {
+          const shortUrl = getShortUrl(item);
+          const isBusy = actioningId === item.id;
+
+          return (
+            <div
+              key={item.id || item.shortCode}
+              className="flex flex-col gap-4 p-5 transition hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0 flex-1">
+                <a
+                  href={shortUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex max-w-full items-center gap-2 break-all text-sm font-semibold text-blue-400 hover:text-blue-300"
+                >
+                  {shortUrl}
+                  <ArrowUpRight size={15} className="shrink-0" />
+                </a>
+
+                <p className="mt-2 break-all text-xs text-zinc-500">
+                  {item.originalUrl}
+                </p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-600">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock3 size={12} />
+                    Created {formatDate(item.createdAt)}
+                  </span>
+
+                  {item.expiresAt && (
+                    <span>Expires {formatDate(item.expiresAt)}</span>
+                  )}
+
+                  <span
+                    className={
+                      item.isActive ? "text-emerald-400" : "text-red-400"
+                    }
+                  >
+                    {item.isActive ? "Active" : "Inactive"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button
+                  onClick={() => onCopy(item)}
+                  disabled={isBusy}
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-blue-400/30 hover:text-blue-300 disabled:opacity-40"
+                >
+                  {copiedCode === item.shortCode ? (
+                    <Check size={15} />
+                  ) : (
+                    <Copy size={15} />
+                  )}
+
+                  {copiedCode === item.shortCode ? "Copied" : "Copy"}
+                </button>
+
+                <a
+                  href={shortUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open short link"
+                  className="rounded-lg border border-white/10 p-2 text-zinc-400 transition hover:border-blue-400/30 hover:text-blue-300"
+                >
+                  <ExternalLink size={16} />
+                </a>
+
+                <button
+                  onClick={() => onShowQr(item)}
+                  disabled={isBusy}
+                  title="Generate QR code"
+                  aria-label="Generate QR code"
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-400/20 px-3 py-2 text-xs font-medium text-blue-300 transition hover:bg-blue-400/10 disabled:opacity-40"
+                >
+                  <QrCode size={15} />
+                  QR
+                </button>
+
+                <button
+                  onClick={() => onToggleStatus(item)}
+                  disabled={isBusy}
+                  title={item.isActive ? "Deactivate URL" : "Activate URL"}
+                  aria-label={
+                    item.isActive ? "Deactivate URL" : "Activate URL"
+                  }
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    item.isActive
+                      ? "border-amber-400/20 text-amber-300 hover:bg-amber-400/10"
+                      : "border-emerald-400/20 text-emerald-300 hover:bg-emerald-400/10"
+                  }`}
+                >
+                  {item.isActive ? (
+                    <PauseCircle size={15} />
+                  ) : (
+                    <PlayCircle size={15} />
+                  )}
+
+                  {isBusy
+                    ? "Please wait..."
+                    : item.isActive
+                      ? "Deactivate"
+                      : "Activate"}
+                </button>
+
+                <button
+                  onClick={() => onDelete(item)}
+                  disabled={isBusy}
+                  title="Delete URL"
+                  aria-label="Delete URL"
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-400/20 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 size={15} />
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

@@ -41,3 +41,6 @@ server/prisma/*.db-journal
 # Temporary files
 .tmp/
 temp/
+
+# Private credentials
+/server/secrets/
