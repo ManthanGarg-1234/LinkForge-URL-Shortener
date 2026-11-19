@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useCallback,
@@ -7,20 +8,47 @@ import {
   useState,
 } from "react";
 
-import {
-  signInWithPopup,
-  signOut,
-} from "firebase/auth";
-
-import {
-  firebaseAuth,
-  googleProvider,
-  isFirebaseConfigured,
-} from "../config/firebase.js";
-
 import { authApi } from "../services/api.js";
 
 const AuthContext = createContext(null);
+
+let firebaseRuntimePromise = null;
+
+function loadFirebaseRuntime() {
+  if (!firebaseRuntimePromise) {
+    firebaseRuntimePromise = Promise.all([
+      import("firebase/auth"),
+      import("../config/firebase.js"),
+    ])
+      .then(([firebaseAuthModule, firebaseConfigModule]) => ({
+        signInWithPopup: firebaseAuthModule.signInWithPopup,
+        signOut: firebaseAuthModule.signOut,
+        firebaseAuth: firebaseConfigModule.firebaseAuth,
+        googleProvider: firebaseConfigModule.googleProvider,
+        isFirebaseConfigured: firebaseConfigModule.isFirebaseConfigured,
+      }))
+      .catch((error) => {
+        firebaseRuntimePromise = null;
+        throw error;
+      });
+  }
+
+  return firebaseRuntimePromise;
+}
+
+async function signOutFirebaseIfLoaded() {
+  if (!firebaseRuntimePromise) return;
+
+  try {
+    const { firebaseAuth, signOut } = await firebaseRuntimePromise;
+
+    if (firebaseAuth) {
+      await signOut(firebaseAuth);
+    }
+  } catch {
+    // Firebase sign-out must not prevent application logout.
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -69,21 +97,28 @@ export function AuthProvider({ children }) {
   const googleLogin = useCallback(async () => {
     setAuthError(null);
 
-    if (!isFirebaseConfigured || !firebaseAuth) {
-      const error = new Error(
-        "Google authentication is not configured. Check your Firebase environment variables.",
-      );
-
-      setAuthError(error.message);
-      throw error;
-    }
-
     let firebaseUser = null;
+    let firebaseAuth = null;
+    let signOut = null;
 
     try {
-      const credential = await signInWithPopup(
+      const firebaseRuntime = await loadFirebaseRuntime();
+
+      firebaseAuth = firebaseRuntime.firebaseAuth;
+      signOut = firebaseRuntime.signOut;
+
+      if (
+        !firebaseRuntime.isFirebaseConfigured ||
+        !firebaseAuth
+      ) {
+        throw new Error(
+          "Google authentication is not configured. Check your Firebase environment variables.",
+        );
+      }
+
+      const credential = await firebaseRuntime.signInWithPopup(
         firebaseAuth,
-        googleProvider,
+        firebaseRuntime.googleProvider,
       );
 
       firebaseUser = credential.user;
@@ -110,7 +145,7 @@ export function AuthProvider({ children }) {
       setAuthError(message);
       throw new Error(message);
     } finally {
-      if (firebaseUser && firebaseAuth) {
+      if (firebaseUser && firebaseAuth && signOut) {
         await signOut(firebaseAuth).catch(() => {});
       }
     }
@@ -123,10 +158,7 @@ export function AuthProvider({ children }) {
       await authApi.logout();
     } finally {
       setUser(null);
-
-      if (firebaseAuth) {
-        await signOut(firebaseAuth).catch(() => {});
-      }
+      await signOutFirebaseIfLoaded();
     }
   }, []);
 

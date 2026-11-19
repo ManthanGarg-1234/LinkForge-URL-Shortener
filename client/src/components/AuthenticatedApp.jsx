@@ -1,5 +1,12 @@
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   Activity,
@@ -25,11 +32,10 @@ import {
   X,
 } from "lucide-react";
 
-import QRCode from "qrcode";
-
 import { useAuth } from "../context/AuthContext.jsx";
 import { urlApi } from "../services/api.js";
-import AnalyticsPage from "./AnalyticsPage.jsx";
+
+const AnalyticsPage = lazy(() => import("./AnalyticsPage.jsx"));
 
 const SHORT_URL_BASE = (
   import.meta.env.VITE_SHORT_URL_BASE || "http://localhost:5000"
@@ -213,6 +219,9 @@ export default function AuthenticatedApp() {
     });
 
     try {
+      const qrCodeModule = await import("qrcode");
+      const QRCode = qrCodeModule.default ?? qrCodeModule;
+
       const dataUrl = await QRCode.toDataURL(getShortUrl(item), {
         width: 512,
         margin: 2,
@@ -782,7 +791,17 @@ export default function AuthenticatedApp() {
             </section>
           )}
 
-          {activePage === "analytics" && <AnalyticsPage />}
+          {activePage === "analytics" && (
+            <Suspense
+              fallback={
+                <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-10 text-center text-sm text-zinc-400">
+                  Loading analytics...
+                </div>
+              }
+            >
+              <AnalyticsPage />
+            </Suspense>
+          )}
         </div>
       </main>
 

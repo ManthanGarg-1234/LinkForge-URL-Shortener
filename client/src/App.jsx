@@ -1,9 +1,13 @@
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { useAuth } from "./context/AuthContext.jsx";
-import AuthenticatedApp from "./components/AuthenticatedApp.jsx";
-import AdminApp from "./components/AdminApp.jsx";
+
+const AuthenticatedApp = lazy(
+  () => import("./components/AuthenticatedApp.jsx"),
+);
+
+const AdminApp = lazy(() => import("./components/AdminApp.jsx"));
 
 function Brand() {
   return (
@@ -643,6 +647,19 @@ function AuthScreen() {
   );
 }
 
+function PortalLoadingFallback() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#080c16] text-white">
+      <div className="text-center">
+        <div className="loading-spinner mx-auto" />
+        <p className="mt-4 text-sm text-zinc-400">
+          Loading your LinkForge workspace...
+        </p>
+      </div>
+    </main>
+  );
+}
+
 function App() {
   const { loading, isAuthenticated, user } = useAuth();
 
@@ -664,11 +681,11 @@ function App() {
   }
 
   if (isAuthenticated && !isPasswordRecoveryRoute) {
-    if (user?.role === "ADMIN") {
-      return <AdminApp />;
-    }
-
-    return <AuthenticatedApp />;
+    return (
+      <Suspense fallback={<PortalLoadingFallback />}>
+        {user?.role === "ADMIN" ? <AdminApp /> : <AuthenticatedApp />}
+      </Suspense>
+    );
   }
 
   return <AuthScreen />;

@@ -23,7 +23,13 @@ const app = express();
 
 app.disable("x-powered-by");
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: {
+      policy: "same-origin-allow-popups",
+    },
+  }),
+);
 
 app.use(
   cors({
