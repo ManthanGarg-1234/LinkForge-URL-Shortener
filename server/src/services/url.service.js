@@ -38,6 +38,14 @@ const redirectSelect = {
   originalUrl: true,
   isActive: true,
   expiresAt: true,
+  moderationStatus: true,
+};
+
+const redirectStateSelect = {
+  id: true,
+  isActive: true,
+  expiresAt: true,
+  moderationStatus: true,
 };
 
 function getCacheKey(shortCode) {
@@ -52,9 +60,10 @@ function isRedisReady() {
  * Deletes a cached short URL.
  *
  * Cache invalidation must never cause a successful database
- * operation to fail.
+ * operation to fail. Redirect resolution independently verifies
+ * moderation state against PostgreSQL.
  */
-async function invalidateShortUrlCache(shortCode) {
+export async function invalidateShortUrlCache(shortCode) {
   if (!shortCode || !isRedisReady()) {
     return;
   }
@@ -70,8 +79,7 @@ async function invalidateShortUrlCache(shortCode) {
 }
 
 /**
- * Converts a cached JSON record into the same shape returned
- * by the PostgreSQL query.
+ * Converts a cached JSON record into the expected redirect shape.
  */
 function parseCachedRecord(value) {
   try {
@@ -148,6 +156,22 @@ async function cacheResolvedShortUrl(shortCode, record) {
   }
 }
 
+function isUsableRedirectRecord(record) {
+  if (
+    !record ||
+    record.isActive !== true ||
+    record.moderationStatus !== "APPROVED"
+  ) {
+    return false;
+  }
+
+  if (record.expiresAt && record.expiresAt <= new Date()) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function createShortUrl({ userId, originalUrl, expiresAt }) {
   if (!userId || !originalUrl) {
     throw new TypeError("User ID and original URL are required.");
@@ -215,7 +239,6 @@ export async function updateShortUrlStatus({ userId, id, isActive }) {
     throw new TypeError("User ID, URL ID, and valid status are required.");
   }
 
-  // Fetch the owner's short code before changing its status.
   const existingUrl = await prisma.shortUrl.findFirst({
     where: {
       id,
@@ -244,7 +267,6 @@ export async function updateShortUrlStatus({ userId, id, isActive }) {
     return null;
   }
 
-  // Invalidate cached redirect data after the database update.
   await invalidateShortUrlCache(existingUrl.shortCode);
 
   return prisma.shortUrl.findFirst({
@@ -261,7 +283,6 @@ export async function deleteShortUrl({ userId, id }) {
     throw new TypeError("User ID and URL ID are required.");
   }
 
-  // Retrieve the short code while enforcing ownership.
   const existingUrl = await prisma.shortUrl.findFirst({
     where: {
       id,
@@ -291,37 +312,28 @@ export async function deleteShortUrl({ userId, id }) {
   return false;
 }
 
+/**
+ * Resolves a short code while treating PostgreSQL as the authority
+ * for activation, moderation, and expiry state.
+ *
+ * Redis may supply the cached destination, but a cache hit is never
+ * trusted until PostgreSQL confirms that the URL is still usable.
+ *
+ * A PostgreSQL verification failure propagates to the error handler.
+ * It must never result in a redirect based only on cached data.
+ */
 export async function resolveShortCode(shortCode) {
   if (!shortCode) {
     return null;
   }
 
   const cacheKey = getCacheKey(shortCode);
+  let cachedValue = null;
 
-  // 1. Attempt Redis cache lookup.
+  // 1. Attempt Redis lookup. Redis failures fall back to PostgreSQL.
   if (isRedisReady()) {
     try {
-      const cachedValue = await redis.get(cacheKey);
-
-      if (cachedValue !== null) {
-        const cachedRecord = parseCachedRecord(cachedValue);
-
-        if (cachedRecord) {
-          // Check expiry again before serving cached data.
-          if (
-            cachedRecord.expiresAt &&
-            cachedRecord.expiresAt <= new Date()
-          ) {
-            await redis.del(cacheKey);
-            return null;
-          }
-
-          return cachedRecord;
-        }
-
-        // Invalid cache data: remove it and use PostgreSQL.
-        await redis.del(cacheKey);
-      }
+      cachedValue = await redis.get(cacheKey);
     } catch (error) {
       console.warn(
         "Short URL cache read failed. Falling back to PostgreSQL:",
@@ -330,24 +342,70 @@ export async function resolveShortCode(shortCode) {
     }
   }
 
-  // 2. PostgreSQL remains the source of truth.
+  // 2. Validate and verify a cached record.
+  if (cachedValue !== null) {
+    const cachedRecord = parseCachedRecord(cachedValue);
+
+    if (!cachedRecord) {
+      await invalidateShortUrlCache(shortCode);
+    } else {
+      // Reject expired cached records without redirecting.
+      if (
+        cachedRecord.expiresAt &&
+        cachedRecord.expiresAt <= new Date()
+      ) {
+        await invalidateShortUrlCache(shortCode);
+        return null;
+      }
+
+      /*
+       * Critical security check:
+       * Never serve a cached URL without verifying its current
+       * activation and moderation state in PostgreSQL.
+       *
+       * This query intentionally sits outside the Redis error
+       * handler. A database failure must not be mistaken for a
+       * Redis failure and must not permit a cached redirect.
+       */
+      const currentState = await prisma.shortUrl.findUnique({
+        where: { shortCode },
+        select: redirectStateSelect,
+      });
+
+      if (
+        !currentState ||
+        currentState.id !== cachedRecord.id ||
+        !isUsableRedirectRecord(currentState)
+      ) {
+        await invalidateShortUrlCache(shortCode);
+        return null;
+      }
+
+      return cachedRecord;
+    }
+  }
+
+  // 3. Cache miss or invalid cache: resolve from PostgreSQL.
   const record = await prisma.shortUrl.findUnique({
     where: { shortCode },
     select: redirectSelect,
   });
 
-  if (!record || !record.isActive) {
+  if (!isUsableRedirectRecord(record)) {
     return null;
   }
 
-  if (record.expiresAt && record.expiresAt <= new Date()) {
-    return null;
-  }
+  // 4. Cache only approved, active, non-expired links.
+  const resolvedRecord = {
+    id: record.id,
+    originalUrl: record.originalUrl,
+    isActive: record.isActive,
+    expiresAt: record.expiresAt,
+  };
 
-  // 3. Cache only successfully resolved active links.
-  await cacheResolvedShortUrl(shortCode, record);
+  await cacheResolvedShortUrl(shortCode, resolvedRecord);
 
-  return record;
+  return resolvedRecord;
 }
 
 export async function recordClick({ shortUrlId, referrerOrigin = null }) {

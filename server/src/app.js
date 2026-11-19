@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -15,6 +14,7 @@ import urlRoutes from "./routes/url.routes.js";
 import analyticsRoutes from "./routes/analytics.routes.js";
 import redirectRoutes from "./routes/redirect.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
+import abuseReportRoutes from "./routes/abuse-report.routes.js";
 
 import { notFoundHandler } from "./middleware/not-found.middleware.js";
 import { errorHandler } from "./middleware/error.middleware.js";
@@ -68,6 +68,7 @@ app.use("/api/v1/auth", passwordResetRoutes);
 app.use("/api/v1/urls", urlRoutes);
 app.use("/api/v1/analytics", analyticsRoutes);
 app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/abuse-reports", abuseReportRoutes);
 
 app.use("/", redirectRoutes);
 

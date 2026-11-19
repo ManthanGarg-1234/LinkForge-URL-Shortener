@@ -308,19 +308,39 @@ describe("URL service", () => {
   });
 
   describe("resolveShortCode", () => {
+    // Actual PostgreSQL record, including moderation state.
     const activeRecord = {
+      id: "url-id",
+      originalUrl: "https://example.com",
+      isActive: true,
+      moderationStatus: "APPROVED",
+      expiresAt: null,
+    };
+
+    // Object stored in Redis.
+    const cachedRecord = {
       id: "url-id",
       originalUrl: "https://example.com",
       isActive: true,
       expiresAt: null,
     };
 
-    it("returns the complete record for an active link", async () => {
+    // Object intentionally returned by resolveShortCode.
+    const resolvedRecord = {
+      id: "url-id",
+      originalUrl: "https://example.com",
+      isActive: true,
+      expiresAt: null,
+    };
+
+    const cacheKey = "linkforge:short-url:Ab12Cd34";
+
+    it("returns the redirect-safe record for an active approved link", async () => {
       prisma.shortUrl.findUnique.mockResolvedValue(activeRecord);
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).resolves.toEqual(resolvedRecord);
 
       expect(prisma.shortUrl.findUnique).toHaveBeenCalledWith({
         where: { shortCode: "Ab12Cd34" },
@@ -328,43 +348,126 @@ describe("URL service", () => {
           id: true,
           originalUrl: true,
           isActive: true,
+          moderationStatus: true,
           expiresAt: true,
         },
       });
 
       expect(redis.set).toHaveBeenCalledWith(
-        "linkforge:short-url:Ab12Cd34",
-        JSON.stringify({
-          id: "url-id",
-          originalUrl: "https://example.com",
-          isActive: true,
-          expiresAt: null,
-        }),
+        cacheKey,
+        JSON.stringify(cachedRecord),
         "EX",
         60,
       );
     });
 
-    it("returns a cached record without querying PostgreSQL", async () => {
-      redis.get.mockResolvedValue(
-        JSON.stringify({
-          id: "url-id",
-          originalUrl: "https://example.com",
+    it("verifies a cached record against PostgreSQL before returning it", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+      prisma.shortUrl.findUnique.mockResolvedValue(activeRecord);
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toEqual(resolvedRecord);
+
+      expect(redis.get).toHaveBeenCalledWith(cacheKey);
+
+      expect(prisma.shortUrl.findUnique).toHaveBeenCalledWith({
+        where: { shortCode: "Ab12Cd34" },
+        select: {
+          id: true,
           isActive: true,
-          expiresAt: null,
-        }),
+          expiresAt: true,
+          moderationStatus: true,
+        },
+      });
+
+      expect(prisma.shortUrl.findUnique).toHaveBeenCalledTimes(1);
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it("rejects a cached URL when PostgreSQL reports it as blocked", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+
+      prisma.shortUrl.findUnique.mockResolvedValue({
+        ...activeRecord,
+        moderationStatus: "BLOCKED",
+      });
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
+    });
+
+    it("rejects a cached URL when PostgreSQL reports it as inactive", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+
+      prisma.shortUrl.findUnique.mockResolvedValue({
+        ...activeRecord,
+        isActive: false,
+      });
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
+    });
+
+    it("rejects a cached URL when PostgreSQL reports it as expired", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+
+      prisma.shortUrl.findUnique.mockResolvedValue({
+        ...activeRecord,
+        expiresAt: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
+    });
+
+    it("rejects a cached URL when its database record no longer exists", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+      prisma.shortUrl.findUnique.mockResolvedValue(null);
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
+    });
+
+    it("rejects a cached URL when its database ID does not match", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+
+      prisma.shortUrl.findUnique.mockResolvedValue({
+        ...activeRecord,
+        id: "different-url-id",
+      });
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
+    });
+
+    it("fails closed when PostgreSQL cannot verify a cached URL", async () => {
+      redis.get.mockResolvedValue(JSON.stringify(cachedRecord));
+
+      prisma.shortUrl.findUnique.mockRejectedValue(
+        new Error("Database unavailable"),
       );
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).rejects.toThrow("Database unavailable");
 
-      expect(redis.get).toHaveBeenCalledWith(
-        "linkforge:short-url:Ab12Cd34",
-      );
-
-      expect(prisma.shortUrl.findUnique).not.toHaveBeenCalled();
-      expect(redis.set).not.toHaveBeenCalled();
+      expect(redis.del).not.toHaveBeenCalled();
     });
 
     it("falls back to PostgreSQL when Redis is unavailable", async () => {
@@ -373,9 +476,19 @@ describe("URL service", () => {
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).resolves.toEqual(resolvedRecord);
 
-      expect(prisma.shortUrl.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.shortUrl.findUnique).toHaveBeenCalledWith({
+        where: { shortCode: "Ab12Cd34" },
+        select: {
+          id: true,
+          originalUrl: true,
+          isActive: true,
+          expiresAt: true,
+          moderationStatus: true,
+        },
+      });
+
       expect(redis.get).not.toHaveBeenCalled();
       expect(redis.set).not.toHaveBeenCalled();
     });
@@ -386,7 +499,7 @@ describe("URL service", () => {
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).resolves.toEqual(resolvedRecord);
 
       expect(prisma.shortUrl.findUnique).toHaveBeenCalledTimes(1);
     });
@@ -397,7 +510,7 @@ describe("URL service", () => {
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).resolves.toEqual(resolvedRecord);
     });
 
     it("returns null for a missing link", async () => {
@@ -423,6 +536,19 @@ describe("URL service", () => {
       expect(redis.set).not.toHaveBeenCalled();
     });
 
+    it("returns null for a blocked link", async () => {
+      prisma.shortUrl.findUnique.mockResolvedValue({
+        ...activeRecord,
+        moderationStatus: "BLOCKED",
+      });
+
+      await expect(
+        resolveShortCode("Ab12Cd34"),
+      ).resolves.toBeNull();
+
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
     it("returns null for an expired link", async () => {
       prisma.shortUrl.findUnique.mockResolvedValue({
         ...activeRecord,
@@ -439,9 +565,7 @@ describe("URL service", () => {
     it("does not serve a cached link after its expiry time", async () => {
       redis.get.mockResolvedValue(
         JSON.stringify({
-          id: "url-id",
-          originalUrl: "https://example.com",
-          isActive: true,
+          ...cachedRecord,
           expiresAt: new Date(Date.now() - 1000).toISOString(),
         }),
       );
@@ -450,10 +574,7 @@ describe("URL service", () => {
         resolveShortCode("Ab12Cd34"),
       ).resolves.toBeNull();
 
-      expect(redis.del).toHaveBeenCalledWith(
-        "linkforge:short-url:Ab12Cd34",
-      );
-
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
       expect(prisma.shortUrl.findUnique).not.toHaveBeenCalled();
     });
 
@@ -463,12 +584,9 @@ describe("URL service", () => {
 
       await expect(
         resolveShortCode("Ab12Cd34"),
-      ).resolves.toEqual(activeRecord);
+      ).resolves.toEqual(resolvedRecord);
 
-      expect(redis.del).toHaveBeenCalledWith(
-        "linkforge:short-url:Ab12Cd34",
-      );
-
+      expect(redis.del).toHaveBeenCalledWith(cacheKey);
       expect(prisma.shortUrl.findUnique).toHaveBeenCalledTimes(1);
     });
 

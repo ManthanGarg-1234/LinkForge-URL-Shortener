@@ -13,3 +13,17 @@ export const urlCreationRateLimiter = rateLimit({
     },
   },
 });
+
+export const abuseReportRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "ABUSE_REPORT_RATE_LIMIT_EXCEEDED",
+      message: "Too many abuse reports submitted. Please try again later.",
+    },
+  },
+});

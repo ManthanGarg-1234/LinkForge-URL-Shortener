@@ -4,38 +4,32 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
   Ban,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Eye,
   LayoutDashboard,
+  Link2,
   LogOut,
   Menu,
   RefreshCw,
   Search,
-  ShieldCheck,
   ShieldAlert,
+  ShieldCheck,
   Users,
   UserCheck,
-  UserCog,
   UserX,
   X,
-  Link2,
   MousePointerClick,
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext.jsx";
 import { adminApi } from "../services/adminApi.js";
+import AdminAbuseReports from "./AdminAbuseReports.jsx";
 
 function getErrorMessage(error) {
-  return (
-    error?.message ||
-    "Something went wrong. Please try again."
-  );
+  return error?.message || "Something went wrong. Please try again.";
 }
 
 function formatDate(value) {
@@ -43,9 +37,7 @@ function formatDate(value) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return "Not available";
-  }
+  if (Number.isNaN(date.getTime())) return "Not available";
 
   return date.toLocaleString("en-IN", {
     day: "2-digit",
@@ -77,8 +69,7 @@ function StatusBadge({ status }) {
   return (
     <span
       className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
-        styles[status] ||
-        "border-white/10 bg-white/5 text-zinc-400"
+        styles[status] || "border-white/10 bg-white/5 text-zinc-400"
       }`}
     >
       {status || "UNKNOWN"}
@@ -105,25 +96,18 @@ function MetricCard({
     <article className="rounded-2xl border border-white/[0.07] bg-[#101725] p-5 transition duration-200 hover:-translate-y-0.5 hover:border-white/15">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-medium text-zinc-500">
-            {label}
-          </p>
-
+          <p className="text-xs font-medium text-zinc-500">{label}</p>
           <p className="mt-3 text-3xl font-bold tracking-tight text-white">
             {formatNumber(value)}
           </p>
         </div>
 
-        <div
-          className={`rounded-xl border p-3 ${accents[accent]}`}
-        >
+        <div className={`rounded-xl border p-3 ${accents[accent]}`}>
           <Icon size={20} />
         </div>
       </div>
 
-      <p className="mt-4 text-xs text-zinc-500">
-        {description}
-      </p>
+      <p className="mt-4 text-xs text-zinc-500">{description}</p>
     </article>
   );
 }
@@ -226,9 +210,7 @@ function UserDetailsModal({ user, loading, onClose }) {
                 <div>
                   <p className="text-xs text-zinc-500">Email verification</p>
                   <p className="mt-1 text-sm text-zinc-300">
-                    {user.emailVerifiedAt
-                      ? "Verified"
-                      : "Not verified"}
+                    {user.emailVerifiedAt ? "Verified" : "Not verified"}
                   </p>
                 </div>
 
@@ -617,6 +599,10 @@ export default function AdminApp() {
     }
   }
 
+  const pendingReports = Number(
+    dashboard?.summary?.moderation?.pendingReports || 0,
+  );
+
   const navigation = [
     {
       id: "overview",
@@ -627,6 +613,12 @@ export default function AdminApp() {
       id: "users",
       label: "User management",
       icon: Users,
+    },
+    {
+      id: "reports",
+      label: "Abuse reports",
+      icon: ShieldAlert,
+      badge: pendingReports,
     },
   ];
 
@@ -684,7 +676,13 @@ export default function AdminApp() {
                   }`}
                 >
                   <Icon size={19} />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+
+                  {item.badge > 0 && (
+                    <span className="min-w-6 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-center text-[10px] font-bold tabular-nums text-amber-300">
+                      {item.badge > 99 ? "99+" : item.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -945,7 +943,7 @@ export default function AdminApp() {
                         </h2>
 
                         <p className="mt-1 text-xs text-zinc-500">
-                          Latest abuse reports and security events
+                          Abuse reports and security events requiring attention
                         </p>
                       </div>
 
@@ -972,6 +970,30 @@ export default function AdminApp() {
                           </span>
                         </div>
 
+                        <button
+                          onClick={() => navigate("reports")}
+                          className="mt-3 flex w-full items-center justify-between rounded-xl border border-blue-400/15 bg-blue-500/[0.06] p-4 text-left transition hover:border-blue-400/30 hover:bg-blue-500/[0.10]"
+                        >
+                          <span className="flex items-center gap-3">
+                            <span className="rounded-lg bg-blue-400/10 p-2 text-blue-300">
+                              <ShieldAlert size={19} />
+                            </span>
+
+                            <span>
+                              <span className="block text-sm font-semibold text-zinc-200">
+                                Open abuse report manager
+                              </span>
+                              <span className="mt-1 block text-xs text-zinc-500">
+                                Inspect, review and moderate reported URLs
+                              </span>
+                            </span>
+                          </span>
+
+                          <span className="text-xs font-bold text-blue-300">
+                            Review →
+                          </span>
+                        </button>
+
                         <div className="mt-3 flex items-center justify-between rounded-xl border border-red-400/10 bg-red-400/[0.04] p-4">
                           <div className="flex items-center gap-3">
                             <div className="rounded-lg bg-red-400/10 p-2 text-red-300">
@@ -995,7 +1017,8 @@ export default function AdminApp() {
                         </div>
 
                         <p className="mt-4 text-xs leading-5 text-zinc-600">
-                          The moderation queue is currently read-only. Review and resolution actions will be added after their backend endpoints are implemented.
+                          Security-event investigation is not yet available in
+                          this interface. The displayed count is informational.
                         </p>
                       </div>
                     </section>
@@ -1047,17 +1070,12 @@ export default function AdminApp() {
                     className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_170px_170px_auto]"
                   >
                     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#0b101d] px-4">
-                      <Search
-                        size={17}
-                        className="shrink-0 text-zinc-500"
-                      />
+                      <Search size={17} className="shrink-0 text-zinc-500" />
 
                       <input
                         type="search"
                         value={searchInput}
-                        onChange={(event) =>
-                          setSearchInput(event.target.value)
-                        }
+                        onChange={(event) => setSearchInput(event.target.value)}
                         placeholder="Search by name or email..."
                         className="w-full bg-transparent py-3.5 text-sm text-white outline-none placeholder:text-zinc-600"
                       />
@@ -1065,9 +1083,7 @@ export default function AdminApp() {
 
                     <select
                       value={roleFilter}
-                      onChange={(event) =>
-                        setRoleFilter(event.target.value)
-                      }
+                      onChange={(event) => setRoleFilter(event.target.value)}
                       className="rounded-xl border border-white/10 bg-[#0b101d] px-3 py-3 text-sm text-zinc-300 outline-none focus:border-blue-400/40"
                     >
                       <option value="">All roles</option>
@@ -1077,9 +1093,7 @@ export default function AdminApp() {
 
                     <select
                       value={statusFilter}
-                      onChange={(event) =>
-                        setStatusFilter(event.target.value)
-                      }
+                      onChange={(event) => setStatusFilter(event.target.value)}
                       className="rounded-xl border border-white/10 bg-[#0b101d] px-3 py-3 text-sm text-zinc-300 outline-none focus:border-blue-400/40"
                     >
                       <option value="">All statuses</option>
@@ -1184,14 +1198,10 @@ export default function AdminApp() {
                                 {item.role === "USER" &&
                                   item.status === "ACTIVE" && (
                                     <button
-                                      onClick={() =>
-                                        setSuspensionTarget(item)
-                                      }
+                                      onClick={() => setSuspensionTarget(item)}
                                       title="Suspend account"
                                       aria-label={`Suspend ${item.email}`}
-                                      disabled={
-                                        actioningUserId === item.id
-                                      }
+                                      disabled={actioningUserId === item.id}
                                       className="rounded-lg border border-red-400/15 p-2 text-red-300 transition hover:bg-red-400/10 disabled:opacity-40"
                                     >
                                       <Ban size={16} />
@@ -1201,14 +1211,10 @@ export default function AdminApp() {
                                 {item.role === "USER" &&
                                   item.status === "SUSPENDED" && (
                                     <button
-                                      onClick={() =>
-                                        handleReactivateUser(item)
-                                      }
+                                      onClick={() => handleReactivateUser(item)}
                                       title="Reactivate account"
                                       aria-label={`Reactivate ${item.email}`}
-                                      disabled={
-                                        actioningUserId === item.id
-                                      }
+                                      disabled={actioningUserId === item.id}
                                       className="rounded-lg border border-emerald-400/15 p-2 text-emerald-300 transition hover:bg-emerald-400/10 disabled:opacity-40"
                                     >
                                       <UserCheck size={16} />
@@ -1239,12 +1245,8 @@ export default function AdminApp() {
 
                   <div className="flex gap-2">
                     <button
-                      disabled={
-                        usersLoading || pagination.page <= 1
-                      }
-                      onClick={() =>
-                        loadUsers(pagination.page - 1)
-                      }
+                      disabled={usersLoading || pagination.page <= 1}
+                      onClick={() => loadUsers(pagination.page - 1)}
                       aria-label="Previous page"
                       className="rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:bg-white/5 disabled:opacity-30"
                     >
@@ -1256,9 +1258,7 @@ export default function AdminApp() {
                         usersLoading ||
                         pagination.page >= pagination.totalPages
                       }
-                      onClick={() =>
-                        loadUsers(pagination.page + 1)
-                      }
+                      onClick={() => loadUsers(pagination.page + 1)}
                       aria-label="Next page"
                       className="rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:bg-white/5 disabled:opacity-30"
                     >
@@ -1268,6 +1268,10 @@ export default function AdminApp() {
                 </div>
               </section>
             </>
+          )}
+
+          {activePage === "reports" && (
+            <AdminAbuseReports onRefresh={loadDashboard} />
           )}
         </div>
       </main>
