@@ -29,19 +29,7 @@ export function AuthProvider({ children }) {
 
   const restoreSession = useCallback(async () => {
     try {
-      let response;
-
-      try {
-        response = await authApi.getCurrentUser();
-      } catch (error) {
-        if (error.status !== 401) {
-          throw error;
-        }
-
-        await authApi.refresh();
-        response = await authApi.getCurrentUser();
-      }
-
+      const response = await authApi.restoreSession();
       setUser(response?.data?.user || null);
     } catch {
       setUser(null);
@@ -165,23 +153,25 @@ export function AuthProvider({ children }) {
   }, []);
 
   const resetPassword = useCallback(async (token, newPassword) => {
-  setAuthError(null);
+    setAuthError(null);
 
-  try {
-    const result = await authApi.resetPassword(token, newPassword);
-    setUser(null);
-    return result;
-  } catch (error) {
-    setAuthError(error.message);
-    throw error;
-  }
-}, []);
+    try {
+      const result = await authApi.resetPassword(token, newPassword);
+      setUser(null);
+      return result;
+    } catch (error) {
+      setAuthError(error.message);
+      throw error;
+    }
+  }, []);
 
   const refreshCurrentUser = useCallback(async () => {
     try {
-      const response = await authApi.getCurrentUser();
-      setUser(response?.data?.user || null);
-      return response?.data?.user || null;
+      const response = await authApi.restoreSession();
+      const currentUser = response?.data?.user || null;
+
+      setUser(currentUser);
+      return currentUser;
     } catch (error) {
       setUser(null);
       throw error;

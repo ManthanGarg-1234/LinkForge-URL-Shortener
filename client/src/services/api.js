@@ -3,6 +3,10 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api/v1"
 ).replace(/\/+$/, "");
 
+const AUTH_REFRESH_LOCK_NAME = "linkforge-auth-session-refresh";
+
+let sessionRestorePromise = null;
+
 async function request(endpoint, options = {}) {
   const {
     method = "GET",
@@ -59,6 +63,36 @@ async function request(endpoint, options = {}) {
   }
 
   return result;
+}
+
+async function restoreSessionWithLock() {
+  const restoreOperation = async () => {
+    try {
+      return await authApi.getCurrentUser();
+    } catch (error) {
+      if (error.status !== 401) {
+        throw error;
+      }
+    }
+
+    await authApi.refresh();
+
+    return authApi.getCurrentUser();
+  };
+
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.locks &&
+    typeof navigator.locks.request === "function"
+  ) {
+    return navigator.locks.request(
+      AUTH_REFRESH_LOCK_NAME,
+      { mode: "exclusive" },
+      restoreOperation,
+    );
+  }
+
+  return restoreOperation();
 }
 
 export const api = {
@@ -120,6 +154,18 @@ export const authApi = {
 
   refresh() {
     return api.post("/auth/refresh", {});
+  },
+
+  restoreSession() {
+    if (sessionRestorePromise) {
+      return sessionRestorePromise;
+    }
+
+    sessionRestorePromise = restoreSessionWithLock().finally(() => {
+      sessionRestorePromise = null;
+    });
+
+    return sessionRestorePromise;
   },
 
   logout() {
