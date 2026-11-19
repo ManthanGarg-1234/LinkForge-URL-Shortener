@@ -1,7 +1,9 @@
 
 import { useEffect, useState } from "react";
+
 import { useAuth } from "./context/AuthContext.jsx";
 import AuthenticatedApp from "./components/AuthenticatedApp.jsx";
+import AdminApp from "./components/AdminApp.jsx";
 
 function Brand() {
   return (
@@ -43,6 +45,7 @@ function InputField({
   return (
     <label className="block space-y-2">
       <span className="text-sm font-medium text-zinc-300">{label}</span>
+
       <input
         type={type}
         value={value}
@@ -641,7 +644,7 @@ function AuthScreen() {
 }
 
 function App() {
-  const { loading, isAuthenticated } = useAuth();
+  const { loading, isAuthenticated, user } = useAuth();
 
   const isPasswordRecoveryRoute =
     window.location.pathname === "/reset-password" ||
@@ -660,11 +663,15 @@ function App() {
     );
   }
 
-  return isAuthenticated && !isPasswordRecoveryRoute ? (
-    <AuthenticatedApp />
-  ) : (
-    <AuthScreen />
-  );
+  if (isAuthenticated && !isPasswordRecoveryRoute) {
+    if (user?.role === "ADMIN") {
+      return <AdminApp />;
+    }
+
+    return <AuthenticatedApp />;
+  }
+
+  return <AuthScreen />;
 }
 
 export default App;

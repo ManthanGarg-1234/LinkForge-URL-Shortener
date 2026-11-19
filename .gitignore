@@ -1,4 +1,3 @@
-
 # Dependencies
 node_modules/
 **/node_modules/
@@ -37,6 +36,10 @@ desktop.ini
 server/src/generated/prisma/
 server/prisma/*.db
 server/prisma/*.db-journal
+
+# Database backups
+*.dump
+*.backup
 
 # Temporary files
 .tmp/

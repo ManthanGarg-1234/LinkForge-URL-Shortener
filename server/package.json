@@ -10,6 +10,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:check": "node src/scripts/check-db.js",
+    "admin:provision": "node src/scripts/provision-admin.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
