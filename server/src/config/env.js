@@ -32,6 +32,25 @@ const appBaseUrlSchema = z.url().refine(
   },
 );
 
+const redisUrlSchema = z.string().url().refine(
+  (value) => {
+    try {
+      const url = new URL(value);
+
+      return (
+        ["redis:", "rediss:"].includes(url.protocol) &&
+        Boolean(url.hostname)
+      );
+    } catch {
+      return false;
+    }
+  },
+  {
+    message:
+      "REDIS_URL must be a valid redis:// or rediss:// URL.",
+  },
+);
+
 const envSchema = z
   .object({
     NODE_ENV: z
@@ -50,6 +69,9 @@ const envSchema = z
       .default("http://localhost:5173"),
 
     APP_BASE_URL: appBaseUrlSchema.default("http://localhost:5000"),
+
+    // Redis
+    REDIS_URL: redisUrlSchema.default("redis://127.0.0.1:6379"),
 
     // Authentication
     AUTH_ACCESS_TOKEN_SECRET: z.string().min(43).optional(),
@@ -102,7 +124,6 @@ const envSchema = z
     EMAIL_FROM: z.string().min(1).optional(),
   })
   .superRefine((values, context) => {
-    // Production must have a strong access-token secret.
     if (
       values.NODE_ENV === "production" &&
       !values.AUTH_ACCESS_TOKEN_SECRET
@@ -159,7 +180,6 @@ const envSchema = z
       });
     }
 
-    // Production requires a complete SMTP configuration.
     if (
       values.NODE_ENV === "production" &&
       configuredEmailValues !== 4

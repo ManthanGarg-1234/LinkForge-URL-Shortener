@@ -8,18 +8,23 @@ vi.mock("../lib/prisma.js", () => ({
   },
 }));
 
+vi.mock("../lib/click-queue.js", () => ({
+  enqueueClick: vi.fn(),
+}));
+
 vi.mock("../services/url.service.js", () => ({
   resolveShortCode: vi.fn(),
   recordClick: vi.fn(),
 }));
 
 import app from "../app.js";
+import { enqueueClick } from "../lib/click-queue.js";
 import {
   resolveShortCode,
   recordClick,
 } from "../services/url.service.js";
 
-describe("Redirect routes and click tracking", () => {
+describe("Redirect routes and asynchronous click tracking", () => {
   const validRecord = {
     id: "550e8400-e29b-41d4-a716-446655440000",
     originalUrl: "https://example.com",
@@ -29,6 +34,8 @@ describe("Redirect routes and click tracking", () => {
     vi.clearAllMocks();
 
     resolveShortCode.mockResolvedValue(validRecord);
+    enqueueClick.mockResolvedValue({ id: "job-123" });
+
     recordClick.mockResolvedValue({
       id: "click-id",
       shortUrlId: validRecord.id,
@@ -36,7 +43,7 @@ describe("Redirect routes and click tracking", () => {
     });
   });
 
-  it("records a click and redirects to the destination", async () => {
+  it("queues a click and redirects to the destination", async () => {
     const response = await request(app)
       .get("/Ab12Cd34")
       .set("Referer", "https://google.com/search?q=linkforge");
@@ -46,24 +53,26 @@ describe("Redirect routes and click tracking", () => {
 
     expect(resolveShortCode).toHaveBeenCalledWith("Ab12Cd34");
 
-    expect(recordClick).toHaveBeenCalledWith({
+    expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: "https://google.com",
     });
+
+    expect(recordClick).not.toHaveBeenCalled();
   });
 
-  it("records a click without a referrer when none is supplied", async () => {
+  it("queues a click without a referrer when none is supplied", async () => {
     const response = await request(app).get("/Ab12Cd34");
 
     expect(response.status).toBe(302);
 
-    expect(recordClick).toHaveBeenCalledWith({
+    expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: null,
     });
   });
 
-  it("stores only the referrer origin, not its path or query", async () => {
+  it("stores only the referrer origin", async () => {
     await request(app)
       .get("/Ab12Cd34")
       .set(
@@ -71,7 +80,7 @@ describe("Redirect routes and click tracking", () => {
         "https://example.org/private/path?token=secret#section",
       );
 
-    expect(recordClick).toHaveBeenCalledWith({
+    expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: "https://example.org",
     });
@@ -82,13 +91,33 @@ describe("Redirect routes and click tracking", () => {
       .get("/Ab12Cd34")
       .set("Referer", "not-a-valid-url");
 
+    expect(enqueueClick).toHaveBeenCalledWith({
+      shortUrlId: validRecord.id,
+      referrerOrigin: null,
+    });
+  });
+
+  it("falls back to PostgreSQL when queue submission fails", async () => {
+    enqueueClick.mockRejectedValue(
+      new Error("Redis queue unavailable"),
+    );
+
+    const response = await request(app).get("/Ab12Cd34");
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe("https://example.com");
+
     expect(recordClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: null,
     });
   });
 
-  it("redirects successfully even if click recording fails", async () => {
+  it("still redirects when both queue and database fallback fail", async () => {
+    enqueueClick.mockRejectedValue(
+      new Error("Redis queue unavailable"),
+    );
+
     recordClick.mockRejectedValue(
       new Error("Analytics database unavailable"),
     );
@@ -106,10 +135,11 @@ describe("Redirect routes and click tracking", () => {
     expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
 
     expect(resolveShortCode).not.toHaveBeenCalled();
+    expect(enqueueClick).not.toHaveBeenCalled();
     expect(recordClick).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the short link does not exist or is unavailable", async () => {
+  it("returns 404 when the short link is unavailable", async () => {
     resolveShortCode.mockResolvedValue(null);
 
     const response = await request(app).get("/Ab12Cd34");
@@ -117,6 +147,7 @@ describe("Redirect routes and click tracking", () => {
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
 
+    expect(enqueueClick).not.toHaveBeenCalled();
     expect(recordClick).not.toHaveBeenCalled();
   });
 });

@@ -31,6 +31,10 @@ vi.mock("../middleware/auth.middleware.js", () => ({
   },
 }));
 
+vi.mock("../lib/click-queue.js", () => ({
+  enqueueClick: vi.fn(),
+}));
+
 vi.mock("../services/url.service.js", () => ({
   createShortUrl: vi.fn(),
   getUserShortUrls: vi.fn(),
@@ -42,6 +46,8 @@ vi.mock("../services/url.service.js", () => ({
 
 import app from "../app.js";
 import { env } from "../config/env.js";
+
+import { enqueueClick } from "../lib/click-queue.js";
 
 import {
   createShortUrl,
@@ -101,6 +107,8 @@ describe("URL API routes", () => {
       isActive: true,
       expiresAt: null,
     });
+
+    enqueueClick.mockResolvedValue({ id: "job-123" });
 
     recordClick.mockResolvedValue({
       id: "click-123",
@@ -400,7 +408,7 @@ describe("URL API routes", () => {
   });
 
   describe("GET /:shortCode", () => {
-    it("redirects to the original URL and records a click", async () => {
+    it("redirects to the original URL and queues a click", async () => {
       const response = await request(app).get("/Ab12Cd34");
 
       expect(response.status).toBe(302);
@@ -409,26 +417,48 @@ describe("URL API routes", () => {
 
       expect(resolveShortCode).toHaveBeenCalledWith("Ab12Cd34");
 
-      expect(recordClick).toHaveBeenCalledWith({
+      expect(enqueueClick).toHaveBeenCalledWith({
         shortUrlId: validRecord.id,
         referrerOrigin: null,
       });
+
+      expect(recordClick).not.toHaveBeenCalled();
     });
 
-    it("records only the referrer origin", async () => {
+    it("queues only the referrer origin", async () => {
       const response = await request(app)
         .get("/Ab12Cd34")
         .set("Referer", "https://google.com/search?q=private");
 
       expect(response.status).toBe(302);
 
-      expect(recordClick).toHaveBeenCalledWith({
+      expect(enqueueClick).toHaveBeenCalledWith({
         shortUrlId: validRecord.id,
         referrerOrigin: "https://google.com",
       });
     });
 
-    it("still redirects when click recording fails", async () => {
+    it("falls back to direct database recording when queue submission fails", async () => {
+      enqueueClick.mockRejectedValue(
+        new Error("Redis queue unavailable"),
+      );
+
+      const response = await request(app).get("/Ab12Cd34");
+
+      expect(response.status).toBe(302);
+      expect(response.headers.location).toBe("https://example.com");
+
+      expect(recordClick).toHaveBeenCalledWith({
+        shortUrlId: validRecord.id,
+        referrerOrigin: null,
+      });
+    });
+
+    it("still redirects when both queue and database recording fail", async () => {
+      enqueueClick.mockRejectedValue(
+        new Error("Redis queue unavailable"),
+      );
+
       recordClick.mockRejectedValue(
         new Error("Analytics database unavailable"),
       );
@@ -445,6 +475,7 @@ describe("URL API routes", () => {
       expect(response.status).toBe(404);
       expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
       expect(resolveShortCode).not.toHaveBeenCalled();
+      expect(enqueueClick).not.toHaveBeenCalled();
       expect(recordClick).not.toHaveBeenCalled();
     });
 
@@ -455,6 +486,7 @@ describe("URL API routes", () => {
 
       expect(response.status).toBe(404);
       expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
+      expect(enqueueClick).not.toHaveBeenCalled();
       expect(recordClick).not.toHaveBeenCalled();
     });
   });

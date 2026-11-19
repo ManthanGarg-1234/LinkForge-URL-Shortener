@@ -1,6 +1,8 @@
 
 import { env } from "../config/env.js";
 
+import { enqueueClick } from "../lib/click-queue.js";
+
 import {
   createShortUrlSchema,
   listShortUrlsSchema,
@@ -191,13 +193,29 @@ export async function redirectShortUrl(req, res) {
     });
   }
 
+  const clickEvent = {
+    shortUrlId: record.id,
+    referrerOrigin: getReferrerOrigin(req.get("referer")),
+  };
+
   try {
-    await recordClick({
-      shortUrlId: record.id,
-      referrerOrigin: getReferrerOrigin(req.get("referer")),
-    });
-  } catch (error) {
-    console.error("Click analytics recording failed:", error);
+    // Queue submission is awaited, but click processing is asynchronous.
+    await enqueueClick(clickEvent);
+  } catch (queueError) {
+    console.error(
+      "Click queue submission failed. Falling back to PostgreSQL:",
+      queueError.message,
+    );
+
+    // Preserve click tracking when Redis or BullMQ is unavailable.
+    try {
+      await recordClick(clickEvent);
+    } catch (databaseError) {
+      console.error(
+        "Click analytics fallback failed:",
+        databaseError.message,
+      );
+    }
   }
 
   res.set("Cache-Control", "no-store");
