@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/prisma.js", () => ({
   prisma: {
+    $queryRaw: vi.fn(),
     shortUrl: {
       count: vi.fn(),
       findMany: vi.fn(),
@@ -10,7 +11,6 @@ vi.mock("../lib/prisma.js", () => ({
     },
     clickEvent: {
       count: vi.fn(),
-      findMany: vi.fn(),
       groupBy: vi.fn(),
     },
   },
@@ -23,22 +23,37 @@ import {
   getLinkAnalytics,
 } from "../services/analytics.service.js";
 
+function getUtcDateOffset(daysFromToday = 0) {
+  const date = new Date();
+
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() + daysFromToday);
+
+  return date.toISOString().slice(0, 10);
+}
+
 describe("Analytics service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe("getAnalyticsOverview", () => {
-    it("returns account totals, daily clicks, and top links", async () => {
+    it("returns account totals, aggregated daily clicks, and top links", async () => {
       prisma.shortUrl.count
         .mockResolvedValueOnce(5)
         .mockResolvedValueOnce(3);
 
       prisma.clickEvent.count.mockResolvedValue(42);
 
-      prisma.clickEvent.findMany.mockResolvedValue([
-        { clickedAt: new Date() },
-        { clickedAt: new Date() },
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          date: getUtcDateOffset(-2),
+          clicks: 2,
+        },
+        {
+          date: getUtcDateOffset(0),
+          clicks: 3,
+        },
       ]);
 
       prisma.clickEvent.groupBy.mockResolvedValue([
@@ -78,12 +93,27 @@ describe("Analytics service", () => {
       });
 
       expect(result.dailyClicks).toHaveLength(30);
+
       expect(
         result.dailyClicks.reduce(
           (total, day) => total + day.clicks,
           0,
         ),
-      ).toBe(2);
+      ).toBe(5);
+
+      expect(result.dailyClicks.find(
+        (day) => day.date === getUtcDateOffset(-2),
+      )).toEqual({
+        date: getUtcDateOffset(-2),
+        clicks: 2,
+      });
+
+      expect(result.dailyClicks.find(
+        (day) => day.date === getUtcDateOffset(0),
+      )).toEqual({
+        date: getUtcDateOffset(0),
+        clicks: 3,
+      });
 
       expect(result.topLinks).toHaveLength(2);
       expect(result.topLinks[0].clicks).toBe(20);
@@ -103,21 +133,17 @@ describe("Analytics service", () => {
         },
       });
 
-      expect(prisma.clickEvent.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          by: ["shortUrlId"],
-          take: 5,
-        }),
-      );
+      expect(prisma.$queryRaw).toHaveBeenCalledOnce();
+      expect(prisma.clickEvent.findMany).toBeUndefined();
     });
 
-    it("returns empty top links when the account has no clicks", async () => {
+    it("returns zero-filled daily buckets when there are no recent clicks", async () => {
       prisma.shortUrl.count
         .mockResolvedValueOnce(0)
         .mockResolvedValueOnce(0);
 
       prisma.clickEvent.count.mockResolvedValue(0);
-      prisma.clickEvent.findMany.mockResolvedValue([]);
+      prisma.$queryRaw.mockResolvedValue([]);
       prisma.clickEvent.groupBy.mockResolvedValue([]);
 
       const result = await getAnalyticsOverview({
@@ -133,6 +159,10 @@ describe("Analytics service", () => {
       expect(result.topLinks).toEqual([]);
       expect(result.dailyClicks).toHaveLength(30);
 
+      expect(
+        result.dailyClicks.every((day) => day.clicks === 0),
+      ).toBe(true);
+
       expect(prisma.shortUrl.findMany).not.toHaveBeenCalled();
     });
 
@@ -140,11 +170,13 @@ describe("Analytics service", () => {
       await expect(
         getAnalyticsOverview({}),
       ).rejects.toThrow("User ID is required.");
+
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 
   describe("getLinkAnalytics", () => {
-    it("returns link statistics and referrer breakdown", async () => {
+    it("returns link statistics and aggregated referrer breakdown", async () => {
       prisma.shortUrl.findFirst.mockResolvedValue({
         id: "url-1",
         shortCode: "Ab12Cd34",
@@ -155,24 +187,31 @@ describe("Analytics service", () => {
 
       prisma.clickEvent.count.mockResolvedValue(10);
 
-      prisma.clickEvent.findMany.mockResolvedValue([
-        {
-          clickedAt: new Date(),
-          referrerOrigin: "https://google.com",
-        },
-        {
-          clickedAt: new Date(),
-          referrerOrigin: "https://google.com",
-        },
-        {
-          clickedAt: new Date(),
-          referrerOrigin: "https://bing.com",
-        },
-        {
-          clickedAt: new Date(),
-          referrerOrigin: null,
-        },
-      ]);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            date: getUtcDateOffset(-1),
+            clicks: 3,
+          },
+          {
+            date: getUtcDateOffset(0),
+            clicks: 1,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            referrer: "https://google.com",
+            clicks: 2,
+          },
+          {
+            referrer: "https://bing.com",
+            clicks: 1,
+          },
+          {
+            referrer: "Direct / Unknown",
+            clicks: 1,
+          },
+        ]);
 
       const result = await getLinkAnalytics({
         userId: "user-123",
@@ -187,6 +226,13 @@ describe("Analytics service", () => {
       });
 
       expect(result.dailyClicks).toHaveLength(30);
+
+      expect(
+        result.dailyClicks.reduce(
+          (total, day) => total + day.clicks,
+          0,
+        ),
+      ).toBe(4);
 
       expect(result.referrers).toEqual([
         {
@@ -216,6 +262,8 @@ describe("Analytics service", () => {
           createdAt: true,
         },
       });
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     });
 
     it("returns null when the link does not belong to the user", async () => {
@@ -228,7 +276,7 @@ describe("Analytics service", () => {
 
       expect(result).toBeNull();
       expect(prisma.clickEvent.count).not.toHaveBeenCalled();
-      expect(prisma.clickEvent.findMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 
     it("rejects missing user or URL IDs", async () => {
@@ -243,6 +291,8 @@ describe("Analytics service", () => {
           id: "url-1",
         }),
       ).rejects.toThrow("User ID and URL ID are required.");
+
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

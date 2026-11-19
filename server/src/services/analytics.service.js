@@ -32,25 +32,39 @@ function createDailyBuckets(startDate) {
     date.setUTCDate(date.getUTCDate() + index);
 
     const key = formatUtcDate(date);
-
-    buckets.push({
+    const bucket = {
       date: key,
       clicks: 0,
-    });
+    };
 
-    counts.set(key, buckets[buckets.length - 1]);
+    buckets.push(bucket);
+    counts.set(key, bucket);
   }
 
   return { buckets, counts };
 }
 
-function incrementDailyCount(counts, clickedAt) {
-  const key = formatUtcDate(clickedAt);
-  const bucket = counts.get(key);
+function applyDailyAggregates(counts, dailyRows) {
+  for (const row of dailyRows) {
+    const bucket = counts.get(row.date);
 
-  if (bucket) {
-    bucket.clicks += 1;
+    if (bucket) {
+      bucket.clicks = Number(row.clicks);
+    }
   }
+}
+
+function mapReferrerAggregates(rows) {
+  return rows
+    .map((row) => ({
+      referrer: row.referrer,
+      clicks: Number(row.clicks),
+    }))
+    .sort(
+      (a, b) =>
+        b.clicks - a.clicks ||
+        a.referrer.localeCompare(b.referrer),
+    );
 }
 
 export async function getAnalyticsOverview({ userId }) {
@@ -64,7 +78,7 @@ export async function getAnalyticsOverview({ userId }) {
     totalLinks,
     activeLinks,
     totalClicks,
-    dailyEvents,
+    dailyRows,
     topLinkGroups,
   ] = await Promise.all([
     prisma.shortUrl.count({
@@ -86,19 +100,22 @@ export async function getAnalyticsOverview({ userId }) {
       },
     }),
 
-    prisma.clickEvent.findMany({
-      where: {
-        shortUrl: {
-          is: { userId },
-        },
-        clickedAt: {
-          gte: startDate,
-        },
-      },
-      select: {
-        clickedAt: true,
-      },
-    }),
+    prisma.$queryRaw`
+      SELECT
+        TO_CHAR(
+          DATE_TRUNC('day', ce."clickedAt"),
+          'YYYY-MM-DD'
+        ) AS date,
+        COUNT(*) AS clicks
+      FROM "click_events" AS ce
+      INNER JOIN "short_urls" AS su
+        ON su."id" = ce."shortUrlId"
+      WHERE
+        su."userId" = ${userId}
+        AND ce."clickedAt" >= ${startDate}
+      GROUP BY DATE_TRUNC('day', ce."clickedAt")
+      ORDER BY DATE_TRUNC('day', ce."clickedAt") ASC
+    `,
 
     prisma.clickEvent.groupBy({
       by: ["shortUrlId"],
@@ -121,9 +138,7 @@ export async function getAnalyticsOverview({ userId }) {
 
   const { buckets, counts } = createDailyBuckets(startDate);
 
-  for (const event of dailyEvents) {
-    incrementDailyCount(counts, event.clickedAt);
-  }
+  applyDailyAggregates(counts, dailyRows);
 
   const topLinkIds = topLinkGroups.map(
     (group) => group.shortUrlId,
@@ -215,61 +230,63 @@ export async function getLinkAnalytics({ userId, id }) {
 
   const startDate = getAnalyticsStartDate();
 
-  const [totalClicks, recentEvents] = await Promise.all([
+  const [totalClicks, dailyRows, referrerRows] = await Promise.all([
     prisma.clickEvent.count({
       where: {
         shortUrlId: id,
       },
     }),
 
-    prisma.clickEvent.findMany({
-      where: {
-        shortUrlId: id,
-        clickedAt: {
-          gte: startDate,
-        },
-      },
-      select: {
-        clickedAt: true,
-        referrerOrigin: true,
-      },
-      orderBy: {
-        clickedAt: "desc",
-      },
-    }),
+    prisma.$queryRaw`
+      SELECT
+        TO_CHAR(
+          DATE_TRUNC('day', "clickedAt"),
+          'YYYY-MM-DD'
+        ) AS date,
+        COUNT(*) AS clicks
+      FROM "click_events"
+      WHERE
+        "shortUrlId" = ${id}
+        AND "clickedAt" >= ${startDate}
+      GROUP BY DATE_TRUNC('day', "clickedAt")
+      ORDER BY DATE_TRUNC('day', "clickedAt") ASC
+    `,
+
+    prisma.$queryRaw`
+      SELECT
+        COALESCE(
+          NULLIF("referrerOrigin", ''),
+          'Direct / Unknown'
+        ) AS referrer,
+        COUNT(*) AS clicks
+      FROM "click_events"
+      WHERE
+        "shortUrlId" = ${id}
+        AND "clickedAt" >= ${startDate}
+      GROUP BY
+        COALESCE(
+          NULLIF("referrerOrigin", ''),
+          'Direct / Unknown'
+        )
+    `,
   ]);
 
   const { buckets, counts } = createDailyBuckets(startDate);
 
-  const referrerCounts = new Map();
+  applyDailyAggregates(counts, dailyRows);
 
-  for (const event of recentEvents) {
-    incrementDailyCount(counts, event.clickedAt);
+  const referrers = mapReferrerAggregates(referrerRows);
 
-    const referrer = event.referrerOrigin || "Direct / Unknown";
-
-    referrerCounts.set(
-      referrer,
-      (referrerCounts.get(referrer) || 0) + 1,
-    );
-  }
-
-  const referrers = [...referrerCounts.entries()]
-    .map(([referrer, clicks]) => ({
-      referrer,
-      clicks,
-    }))
-    .sort(
-      (a, b) =>
-        b.clicks - a.clicks ||
-        a.referrer.localeCompare(b.referrer),
-    );
+  const clicksLast30Days = dailyRows.reduce(
+    (total, row) => total + Number(row.clicks),
+    0,
+  );
 
   return {
     link,
     summary: {
       totalClicks,
-      clicksLast30Days: recentEvents.length,
+      clicksLast30Days,
     },
     dailyClicks: buckets,
     referrers,
