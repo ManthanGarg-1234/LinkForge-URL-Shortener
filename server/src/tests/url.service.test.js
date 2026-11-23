@@ -308,7 +308,6 @@ describe("URL service", () => {
   });
 
   describe("resolveShortCode", () => {
-    // Actual PostgreSQL record, including moderation state.
     const activeRecord = {
       id: "url-id",
       originalUrl: "https://example.com",
@@ -317,7 +316,6 @@ describe("URL service", () => {
       expiresAt: null,
     };
 
-    // Object stored in Redis.
     const cachedRecord = {
       id: "url-id",
       originalUrl: "https://example.com",
@@ -325,7 +323,6 @@ describe("URL service", () => {
       expiresAt: null,
     };
 
-    // Object intentionally returned by resolveShortCode.
     const resolvedRecord = {
       id: "url-id",
       originalUrl: "https://example.com",
@@ -599,11 +596,13 @@ describe("URL service", () => {
   });
 
   describe("recordClick", () => {
-    it("creates a click event with the supplied link and referrer origin", async () => {
+    const clickedAt = new Date("2026-11-19T10:00:00.000Z");
+
+    it("persists the supplied click timestamp and referrer origin", async () => {
       const event = {
         id: "click-id",
         shortUrlId: "url-id",
-        clickedAt: new Date("2026-11-19T10:00:00.000Z"),
+        clickedAt,
       };
 
       prisma.clickEvent.create.mockResolvedValue(event);
@@ -611,6 +610,7 @@ describe("URL service", () => {
       const result = await recordClick({
         shortUrlId: "url-id",
         referrerOrigin: "https://google.com",
+        clickedAt,
       });
 
       expect(result).toEqual(event);
@@ -619,6 +619,7 @@ describe("URL service", () => {
         data: {
           shortUrlId: "url-id",
           referrerOrigin: "https://google.com",
+          clickedAt,
         },
         select: {
           id: true,
@@ -628,15 +629,16 @@ describe("URL service", () => {
       });
     });
 
-    it("allows a missing referrer", async () => {
+    it("allows a missing referrer while preserving the timestamp", async () => {
       prisma.clickEvent.create.mockResolvedValue({
         id: "click-id",
         shortUrlId: "url-id",
-        clickedAt: new Date(),
+        clickedAt,
       });
 
       await recordClick({
         shortUrlId: "url-id",
+        clickedAt,
       });
 
       expect(prisma.clickEvent.create).toHaveBeenCalledWith(
@@ -644,6 +646,7 @@ describe("URL service", () => {
           data: {
             shortUrlId: "url-id",
             referrerOrigin: null,
+            clickedAt,
           },
         }),
       );
@@ -651,8 +654,42 @@ describe("URL service", () => {
 
     it("rejects a missing short URL ID", async () => {
       await expect(
-        recordClick({}),
+        recordClick({
+          clickedAt,
+        }),
       ).rejects.toThrow("Short URL ID is required.");
+
+      expect(prisma.clickEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing click timestamp", async () => {
+      await expect(
+        recordClick({
+          shortUrlId: "url-id",
+        }),
+      ).rejects.toThrow("A valid click timestamp is required.");
+
+      expect(prisma.clickEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid click timestamp", async () => {
+      await expect(
+        recordClick({
+          shortUrlId: "url-id",
+          clickedAt: new Date("invalid"),
+        }),
+      ).rejects.toThrow("A valid click timestamp is required.");
+
+      expect(prisma.clickEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a timestamp supplied as a string", async () => {
+      await expect(
+        recordClick({
+          shortUrlId: "url-id",
+          clickedAt: "2026-11-19T10:00:00.000Z",
+        }),
+      ).rejects.toThrow("A valid click timestamp is required.");
 
       expect(prisma.clickEvent.create).not.toHaveBeenCalled();
     });

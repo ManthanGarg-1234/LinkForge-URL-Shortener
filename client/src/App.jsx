@@ -2,6 +2,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { useAuth } from "./context/AuthContext.jsx";
+import { getAuthRoutePath, getAuthRouteState } from "./utils/auth-routes.js";
 
 const AuthenticatedApp = lazy(
   () => import("./components/AuthenticatedApp.jsx"),
@@ -76,27 +77,23 @@ function AuthScreen() {
     clearAuthError,
   } = useAuth();
 
-  const [mode, setMode] = useState(() => {
-    if (window.location.pathname === "/reset-password") {
-      return "reset";
-    }
+  const [initialRouteState] = useState(() =>
+    getAuthRouteState(window.location.pathname, window.location.search),
+  );
 
-    if (window.location.pathname === "/forgot-password") {
-      return "forgot";
-    }
-
-    return "login";
-  });
-
+  const [mode, setMode] = useState(initialRouteState.mode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [verificationToken, setVerificationToken] = useState("");
-  const [resetToken, setResetToken] = useState(
-    () => new URLSearchParams(window.location.search).get("token") || "",
+  const [verificationToken, setVerificationToken] = useState(
+    initialRouteState.verificationToken,
   );
+  const [verificationRouteError, setVerificationRouteError] = useState(
+    initialRouteState.verificationError,
+  );
+  const [resetToken, setResetToken] = useState(initialRouteState.resetToken);
 
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -113,35 +110,27 @@ function AuthScreen() {
     setMode(nextMode);
     setSuccessMessage("");
     setLocalError("");
+    setVerificationRouteError("");
     clearAuthError();
 
-    if (nextMode === "forgot") {
-      window.history.pushState({}, "", "/forgot-password");
-    } else if (nextMode === "reset") {
-      const query = resetToken
-        ? `?token=${encodeURIComponent(resetToken)}`
-        : "";
-
-      window.history.pushState({}, "", `/reset-password${query}`);
-    } else {
-      window.history.pushState({}, "", "/");
-    }
+    window.history.pushState(
+      {},
+      "",
+      getAuthRoutePath(nextMode, resetToken),
+    );
   }
 
   useEffect(() => {
     function handlePopState() {
-      const pathname = window.location.pathname;
+      const routeState = getAuthRouteState(
+        window.location.pathname,
+        window.location.search,
+      );
 
-      if (pathname === "/reset-password") {
-        setMode("reset");
-        setResetToken(
-          new URLSearchParams(window.location.search).get("token") || "",
-        );
-      } else if (pathname === "/forgot-password") {
-        setMode("forgot");
-      } else {
-        setMode("login");
-      }
+      setMode(routeState.mode);
+      setVerificationToken(routeState.verificationToken);
+      setVerificationRouteError(routeState.verificationError);
+      setResetToken(routeState.resetToken);
 
       setLocalError("");
       setSuccessMessage("");
@@ -210,7 +199,7 @@ function AuthScreen() {
     clearAuthError();
 
     if (isVerify) {
-      if (verificationToken.trim().length < 20) {
+      if (verificationToken.trim().length < 20 || verificationToken.length > 200) {
         setLocalError("Enter a valid email verification token.");
         return;
       }
@@ -441,7 +430,7 @@ function AuthScreen() {
               role="alert"
               className="mb-5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
             >
-              {localError || authError}
+              {localError || verificationRouteError || authError}
             </div>
           )}
 
@@ -663,9 +652,11 @@ function PortalLoadingFallback() {
 function App() {
   const { loading, isAuthenticated, user } = useAuth();
 
-  const isPasswordRecoveryRoute =
-    window.location.pathname === "/reset-password" ||
-    window.location.pathname === "/forgot-password";
+  const isAuthFlowRoute = [
+    "/reset-password",
+    "/forgot-password",
+    "/verify-email",
+  ].includes(window.location.pathname);
 
   if (loading) {
     return (
@@ -680,7 +671,7 @@ function App() {
     );
   }
 
-  if (isAuthenticated && !isPasswordRecoveryRoute) {
+  if (isAuthenticated && !isAuthFlowRoute) {
     return (
       <Suspense fallback={<PortalLoadingFallback />}>
         {user?.role === "ADMIN" ? <AdminApp /> : <AuthenticatedApp />}

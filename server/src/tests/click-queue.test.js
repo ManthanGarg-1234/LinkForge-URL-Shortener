@@ -1,3 +1,4 @@
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -68,6 +69,8 @@ import {
 } from "../lib/click-queue.js";
 
 describe("BullMQ click queue", () => {
+  const clickedAt = new Date("2026-11-19T10:00:00.000Z");
+
   beforeEach(() => {
     mocks.recordClick.mockReset();
     mocks.recordClick.mockResolvedValue({
@@ -95,34 +98,62 @@ describe("BullMQ click queue", () => {
     });
   });
 
-  it("enqueues a click event with the correct job name and payload", async () => {
+  it("enqueues a click event with an ISO timestamp", async () => {
     const event = {
       shortUrlId: "url-123",
       referrerOrigin: "https://google.com",
+      clickedAt,
     };
 
     await enqueueClick(event);
 
-    expect(clickQueue.add).toHaveBeenCalledWith("record-click", event);
+    expect(clickQueue.add).toHaveBeenCalledWith("record-click", {
+      shortUrlId: "url-123",
+      referrerOrigin: "https://google.com",
+      clickedAt: clickedAt.toISOString(),
+    });
   });
 
   it("enqueues a click event with a null referrer by default", async () => {
     await enqueueClick({
       shortUrlId: "url-123",
+      clickedAt,
     });
 
     expect(clickQueue.add).toHaveBeenCalledWith("record-click", {
       shortUrlId: "url-123",
       referrerOrigin: null,
+      clickedAt: clickedAt.toISOString(),
     });
   });
 
   it("rejects an event without a short URL ID", async () => {
     await expect(
       enqueueClick({
-        referrerOrigin: "https://google.com",
+        clickedAt,
       }),
     ).rejects.toThrow("Short URL ID is required.");
+
+    expect(clickQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects an event without a click timestamp", async () => {
+    await expect(
+      enqueueClick({
+        shortUrlId: "url-123",
+      }),
+    ).rejects.toThrow("A valid click timestamp is required.");
+
+    expect(clickQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid click timestamp", async () => {
+    await expect(
+      enqueueClick({
+        shortUrlId: "url-123",
+        clickedAt: new Date("invalid"),
+      }),
+    ).rejects.toThrow("A valid click timestamp is required.");
 
     expect(clickQueue.add).not.toHaveBeenCalled();
   });
@@ -153,7 +184,7 @@ describe("BullMQ click queue", () => {
     expect(mocks.WorkerMock).toHaveBeenCalledTimes(constructorCalls);
   });
 
-  it("persists a valid click event through recordClick", async () => {
+  it("restores the original click timestamp before persistence", async () => {
     const worker = await startClickWorker();
 
     await worker.processor({
@@ -161,13 +192,19 @@ describe("BullMQ click queue", () => {
       data: {
         shortUrlId: "url-123",
         referrerOrigin: "https://google.com",
+        clickedAt: clickedAt.toISOString(),
       },
     });
 
     expect(mocks.recordClick).toHaveBeenCalledWith({
       shortUrlId: "url-123",
       referrerOrigin: "https://google.com",
+      clickedAt,
     });
+
+    expect(
+      mocks.recordClick.mock.calls[0][0].clickedAt,
+    ).toBeInstanceOf(Date);
   });
 
   it("uses null when a worker job has no referrer", async () => {
@@ -177,13 +214,50 @@ describe("BullMQ click queue", () => {
       name: "record-click",
       data: {
         shortUrlId: "url-123",
+        clickedAt: clickedAt.toISOString(),
       },
     });
 
     expect(mocks.recordClick).toHaveBeenCalledWith({
       shortUrlId: "url-123",
       referrerOrigin: null,
+      clickedAt,
     });
+  });
+
+  it("supports legacy jobs without a stored timestamp", async () => {
+    const worker = await startClickWorker();
+
+    await worker.processor({
+      name: "record-click",
+      data: {
+        shortUrlId: "url-123",
+        referrerOrigin: null,
+      },
+    });
+
+    expect(mocks.recordClick).toHaveBeenCalledOnce();
+
+    const recordedEvent = mocks.recordClick.mock.calls[0][0];
+
+    expect(recordedEvent.clickedAt).toBeInstanceOf(Date);
+    expect(Number.isFinite(recordedEvent.clickedAt.getTime())).toBe(true);
+  });
+
+  it("rejects malformed timestamps in queued jobs", async () => {
+    const worker = await startClickWorker();
+
+    await expect(
+      worker.processor({
+        name: "record-click",
+        data: {
+          shortUrlId: "url-123",
+          clickedAt: "not-a-valid-date",
+        },
+      }),
+    ).rejects.toThrow("Click job contains an invalid timestamp.");
+
+    expect(mocks.recordClick).not.toHaveBeenCalled();
   });
 
   it("propagates database errors so BullMQ can retry the job", async () => {
@@ -199,6 +273,7 @@ describe("BullMQ click queue", () => {
         data: {
           shortUrlId: "url-123",
           referrerOrigin: null,
+          clickedAt: clickedAt.toISOString(),
         },
       }),
     ).rejects.toThrow("Database temporarily unavailable");

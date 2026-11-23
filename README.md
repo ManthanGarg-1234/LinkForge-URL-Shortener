@@ -1,4 +1,3 @@
-
 # LinkForge
 
 A production-oriented URL Shortener and Link Management Platform.
@@ -6,6 +5,7 @@ A production-oriented URL Shortener and Link Management Platform.
 ## Technology Stack
 
 ### Frontend
+
 - React
 - Vite
 - JavaScript
@@ -16,6 +16,7 @@ A production-oriented URL Shortener and Link Management Platform.
 - Recharts
 
 ### Backend
+
 - Node.js
 - Express.js
 - PostgreSQL
@@ -24,6 +25,7 @@ A production-oriented URL Shortener and Link Management Platform.
 - BullMQ
 
 ### Testing and Documentation
+
 - Vitest
 - Supertest
 - Swagger / OpenAPI
@@ -39,20 +41,28 @@ LinkForge follows a modular monolith architecture with separate frontend and bac
 
 ## Development
 
+### Prerequisites
+
+- Node.js 26+
+- npm 11+
+- PostgreSQL 18
+- Redis 7
+
 Install dependencies:
 
-```bash
-npm install
-```
+    npm ci
 
 Start development servers:
 
-```bash
-npm run dev
-```
+    npm run dev
 
 ## Project Status
 
-Phase 1: Project initialization and foundation.
+Phase 10: Local deployment, operational hardening, and verification completed (2026-11-23).
 
-# LinkForge-URL-Shortener
+**Completed:** Docker recovery, dependency security remediation, API hardening, migrations, 325 automated tests, frontend build, deployment checks, actual short-link redirect, and normal authentication/session verification.
+**Scope note:** Public production deployment is not included. Google account linking remains deferred. See [docs/operations.md](docs/operations.md) for operational limitations.
+
+## Operations Documentation
+
+See [docs/operations.md](docs/operations.md) for deployment, migrations, health checks, security controls, dependency audits, and recovery guidance.

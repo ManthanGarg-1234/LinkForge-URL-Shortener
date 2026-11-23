@@ -31,6 +31,15 @@ function createRedisConnection({ worker = false } = {}) {
   });
 }
 
+function validateClickTimestamp(clickedAt) {
+  if (
+    !(clickedAt instanceof Date) ||
+    !Number.isFinite(clickedAt.getTime())
+  ) {
+    throw new TypeError("A valid click timestamp is required.");
+  }
+}
+
 const queueRedis = createRedisConnection();
 
 export const clickQueue = new Queue(QUEUE_NAME, {
@@ -44,14 +53,18 @@ let workerRedis = null;
 export async function enqueueClick({
   shortUrlId,
   referrerOrigin = null,
+  clickedAt,
 }) {
   if (!shortUrlId) {
     throw new TypeError("Short URL ID is required.");
   }
 
+  validateClickTimestamp(clickedAt);
+
   return clickQueue.add("record-click", {
     shortUrlId,
     referrerOrigin,
+    clickedAt: clickedAt.toISOString(),
   });
 }
 
@@ -69,11 +82,27 @@ export async function startClickWorker() {
         throw new Error(`Unsupported click job: ${job.name}`);
       }
 
-      const { shortUrlId, referrerOrigin = null } = job.data;
+      const {
+        shortUrlId,
+        referrerOrigin = null,
+        clickedAt,
+      } = job.data;
+
+      // Older queued jobs did not store a click timestamp.
+      // Preserve their previous processing-time behavior.
+      const eventTimestamp =
+        clickedAt === undefined
+          ? new Date()
+          : new Date(clickedAt);
+
+      if (!Number.isFinite(eventTimestamp.getTime())) {
+        throw new TypeError("Click job contains an invalid timestamp.");
+      }
 
       await recordClick({
         shortUrlId,
         referrerOrigin,
+        clickedAt: eventTimestamp,
       });
     },
     {
@@ -136,5 +165,5 @@ export async function closeClickQueue() {
     queueRedis.disconnect();
   }
 
-  console.log("BullMQ click queue closed.");
+  console.log("Click queue closed.");
 }

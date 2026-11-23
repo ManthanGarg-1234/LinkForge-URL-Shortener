@@ -349,7 +349,6 @@ export async function resolveShortCode(shortCode) {
     if (!cachedRecord) {
       await invalidateShortUrlCache(shortCode);
     } else {
-      // Reject expired cached records without redirecting.
       if (
         cachedRecord.expiresAt &&
         cachedRecord.expiresAt <= new Date()
@@ -358,15 +357,6 @@ export async function resolveShortCode(shortCode) {
         return null;
       }
 
-      /*
-       * Critical security check:
-       * Never serve a cached URL without verifying its current
-       * activation and moderation state in PostgreSQL.
-       *
-       * This query intentionally sits outside the Redis error
-       * handler. A database failure must not be mistaken for a
-       * Redis failure and must not permit a cached redirect.
-       */
       const currentState = await prisma.shortUrl.findUnique({
         where: { shortCode },
         select: redirectStateSelect,
@@ -408,15 +398,31 @@ export async function resolveShortCode(shortCode) {
   return resolvedRecord;
 }
 
-export async function recordClick({ shortUrlId, referrerOrigin = null }) {
+/**
+ * Persists a click using the timestamp captured when the redirect
+ * request was received, not when the queue worker processes it.
+ */
+export async function recordClick({
+  shortUrlId,
+  referrerOrigin = null,
+  clickedAt,
+}) {
   if (!shortUrlId) {
     throw new TypeError("Short URL ID is required.");
+  }
+
+  if (
+    !(clickedAt instanceof Date) ||
+    !Number.isFinite(clickedAt.getTime())
+  ) {
+    throw new TypeError("A valid click timestamp is required.");
   }
 
   return prisma.clickEvent.create({
     data: {
       shortUrlId,
       referrerOrigin,
+      clickedAt,
     },
     select: {
       id: true,

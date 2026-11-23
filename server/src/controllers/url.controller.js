@@ -196,10 +196,11 @@ export async function redirectShortUrl(req, res) {
   const clickEvent = {
     shortUrlId: record.id,
     referrerOrigin: getReferrerOrigin(req.get("referer")),
+    clickedAt: new Date(),
   };
 
   try {
-    // Queue submission is awaited, but click processing is asynchronous.
+    // The original click timestamp is preserved in the queue.
     await enqueueClick(clickEvent);
   } catch (queueError) {
     console.error(
@@ -207,7 +208,7 @@ export async function redirectShortUrl(req, res) {
       queueError.message,
     );
 
-    // Preserve click tracking when Redis or BullMQ is unavailable.
+    // Use the same timestamp for the fallback database write.
     try {
       await recordClick(clickEvent);
     } catch (databaseError) {

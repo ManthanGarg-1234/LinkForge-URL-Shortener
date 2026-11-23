@@ -103,7 +103,10 @@ export async function getAnalyticsOverview({ userId }) {
     prisma.$queryRaw`
       SELECT
         TO_CHAR(
-          DATE_TRUNC('day', ce."clickedAt"),
+          DATE_TRUNC(
+            'day',
+            ce."clickedAt" AT TIME ZONE 'UTC'
+          ),
           'YYYY-MM-DD'
         ) AS date,
         COUNT(*) AS clicks
@@ -113,8 +116,16 @@ export async function getAnalyticsOverview({ userId }) {
       WHERE
         su."userId" = ${userId}
         AND ce."clickedAt" >= ${startDate}
-      GROUP BY DATE_TRUNC('day', ce."clickedAt")
-      ORDER BY DATE_TRUNC('day', ce."clickedAt") ASC
+      GROUP BY
+        DATE_TRUNC(
+          'day',
+          ce."clickedAt" AT TIME ZONE 'UTC'
+        )
+      ORDER BY
+        DATE_TRUNC(
+          'day',
+          ce."clickedAt" AT TIME ZONE 'UTC'
+        ) ASC
     `,
 
     prisma.clickEvent.groupBy({
@@ -240,7 +251,10 @@ export async function getLinkAnalytics({ userId, id }) {
     prisma.$queryRaw`
       SELECT
         TO_CHAR(
-          DATE_TRUNC('day', "clickedAt"),
+          DATE_TRUNC(
+            'day',
+            "clickedAt" AT TIME ZONE 'UTC'
+          ),
           'YYYY-MM-DD'
         ) AS date,
         COUNT(*) AS clicks
@@ -248,8 +262,16 @@ export async function getLinkAnalytics({ userId, id }) {
       WHERE
         "shortUrlId" = ${id}
         AND "clickedAt" >= ${startDate}
-      GROUP BY DATE_TRUNC('day', "clickedAt")
-      ORDER BY DATE_TRUNC('day', "clickedAt") ASC
+      GROUP BY
+        DATE_TRUNC(
+          'day',
+          "clickedAt" AT TIME ZONE 'UTC'
+        )
+      ORDER BY
+        DATE_TRUNC(
+          'day',
+          "clickedAt" AT TIME ZONE 'UTC'
+        ) ASC
     `,
 
     prisma.$queryRaw`

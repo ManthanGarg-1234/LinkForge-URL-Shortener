@@ -1,7 +1,6 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-
+import { env } from "../config/env.js";
 vi.mock("../lib/prisma.js", () => ({
   prisma: {
     $queryRaw: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
@@ -102,8 +101,10 @@ function authenticatedRequest(role) {
 }
 
 function adminRequest(method, path) {
-  return request(app)[method](path)
-    .set("Cookie", "lf_test_auth=admin");
+  return request(app)
+    [method](path)
+    .set("Cookie", "lf_test_auth=admin")
+    .set("Origin", env.CORS_ORIGIN);
 }
 
 describe("Admin API routes", () => {
@@ -316,6 +317,18 @@ describe("Admin API routes", () => {
       );
     });
 
+    it("rejects admin suspend requests from an untrusted origin", async () => {
+      const response = await request(app)
+        .post(`/api/v1/admin/users/${USER_ID}/suspend`)
+        .set("Cookie", "lf_test_auth=admin")
+        .set("Origin", "https://attacker.example")
+        .send({ reason: "Policy violation confirmed." });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(suspendAdminManagedUser).not.toHaveBeenCalled();
+    });
+
     it("rejects a missing suspension reason", async () => {
       const response = await adminRequest(
         "post",
@@ -402,6 +415,17 @@ describe("Admin API routes", () => {
           ipAddress: expect.any(String),
         }),
       );
+    });
+
+    it("rejects admin reactivate requests from an untrusted origin", async () => {
+      const response = await request(app)
+        .post(`/api/v1/admin/users/${USER_ID}/reactivate`)
+        .set("Cookie", "lf_test_auth=admin")
+        .set("Origin", "https://attacker.example");
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(reactivateAdminManagedUser).not.toHaveBeenCalled();
     });
 
     it("rejects invalid target IDs", async () => {

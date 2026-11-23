@@ -32,6 +32,18 @@ function getUtcDateOffset(daysFromToday = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+function getSqlText(query) {
+  const sql = Array.isArray(query) ? query.join("?") : query;
+
+  return typeof sql === "string"
+    ? sql
+        .replace(/\s+/g, " ")
+        .replace(/\( /g, "(")
+        .replace(/ \)/g, ")")
+        .trim()
+    : "";
+}
+
 describe("Analytics service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,16 +113,20 @@ describe("Analytics service", () => {
         ),
       ).toBe(5);
 
-      expect(result.dailyClicks.find(
-        (day) => day.date === getUtcDateOffset(-2),
-      )).toEqual({
+      expect(
+        result.dailyClicks.find(
+          (day) => day.date === getUtcDateOffset(-2),
+        ),
+      ).toEqual({
         date: getUtcDateOffset(-2),
         clicks: 2,
       });
 
-      expect(result.dailyClicks.find(
-        (day) => day.date === getUtcDateOffset(0),
-      )).toEqual({
+      expect(
+        result.dailyClicks.find(
+          (day) => day.date === getUtcDateOffset(0),
+        ),
+      ).toEqual({
         date: getUtcDateOffset(0),
         clicks: 3,
       });
@@ -134,6 +150,19 @@ describe("Analytics service", () => {
       });
 
       expect(prisma.$queryRaw).toHaveBeenCalledOnce();
+
+      const dailyQuery = getSqlText(
+        prisma.$queryRaw.mock.calls[0][0],
+      );
+
+      expect(dailyQuery).toContain(
+        `DATE_TRUNC('day', ce."clickedAt" AT TIME ZONE 'UTC')`,
+      );
+
+      expect(dailyQuery).toContain(
+        `ce."clickedAt" >=`,
+      );
+
       expect(prisma.clickEvent.findMany).toBeUndefined();
     });
 
@@ -264,6 +293,26 @@ describe("Analytics service", () => {
       });
 
       expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+
+      const dailyQuery = getSqlText(
+        prisma.$queryRaw.mock.calls[0][0],
+      );
+
+      const referrerQuery = getSqlText(
+        prisma.$queryRaw.mock.calls[1][0],
+      );
+
+      expect(dailyQuery).toContain(
+        `DATE_TRUNC('day', "clickedAt" AT TIME ZONE 'UTC')`,
+      );
+
+      expect(dailyQuery).toContain(
+        `"clickedAt" >=`,
+      );
+
+      expect(referrerQuery).toContain(
+        `"clickedAt" >=`,
+      );
     });
 
     it("returns null when the link does not belong to the user", async () => {

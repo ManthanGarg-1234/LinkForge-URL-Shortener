@@ -1,28 +1,4 @@
-
-import nodemailer from "nodemailer";
 import { env, isEmailConfigured } from "../config/env.js";
-
-let transporter = null;
-
-function getTransporter() {
-  if (!isEmailConfigured) {
-    throw new Error("SMTP email delivery is not configured.");
-  }
-
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: env.EMAIL_HOST,
-      port: env.EMAIL_PORT,
-      secure: env.EMAIL_SECURE,
-      auth: {
-        user: env.EMAIL_USER,
-        pass: env.EMAIL_APP_PASSWORD,
-      },
-    });
-  }
-
-  return transporter;
-}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => {
@@ -58,7 +34,7 @@ export async function sendTransactionalEmail({
 
   if (!isEmailConfigured) {
     if (env.NODE_ENV !== "development") {
-      throw new Error("SMTP email delivery is not configured.");
+      throw new Error("Brevo email delivery is not configured.");
     }
 
     console.info(
@@ -72,6 +48,7 @@ export async function sendTransactionalEmail({
   const safeMessage = escapeHtml(message);
   const safeButtonLabel = escapeHtml(buttonLabel);
   const safeActionUrl = escapeHtml(actionUrl);
+  const safeSubject = escapeHtml(subject);
 
   const html = `
     <!DOCTYPE html>
@@ -79,7 +56,7 @@ export async function sendTransactionalEmail({
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>${escapeHtml(subject)}</title>
+        <title>${safeSubject}</title>
       </head>
       <body style="margin:0;padding:32px 16px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
         <div style="max-width:560px;margin:0 auto;padding:32px;background:#ffffff;border-radius:12px;">
@@ -118,21 +95,46 @@ export async function sendTransactionalEmail({
     "LinkForge Account Security",
   ].join("\n");
 
-  const info = await getTransporter().sendMail({
-    from: env.EMAIL_FROM,
-    to: email,
-    subject,
-    text,
-    html,
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": env.BREVO_API_KEY,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: {
+        name: env.EMAIL_FROM_NAME,
+        email: env.EMAIL_FROM,
+      },
+      to: [
+        {
+          email,
+          name: name || "User",
+        },
+      ],
+      subject,
+      htmlContent: html,
+      textContent: text,
+    }),
+    signal: AbortSignal.timeout(15000),
   });
 
-  if (!info.accepted?.includes(email)) {
-    throw new Error("The email provider did not accept the recipient.");
+  if (!response.ok) {
+    throw new Error(
+      `Brevo email delivery failed with HTTP ${response.status}.`,
+    );
+  }
+
+  const result = await response.json();
+
+  if (typeof result.messageId !== "string" || result.messageId.length === 0) {
+    throw new Error("Brevo accepted no verifiable message identifier.");
   }
 
   return {
     delivered: true,
-    mode: "smtp",
-    messageId: info.messageId,
+    mode: "brevo",
+    messageId: result.messageId,
   };
 }

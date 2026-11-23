@@ -213,7 +213,7 @@ model ShortUrl {
 model ClickEvent {
   id             String   @id @default(uuid()) @db.Uuid
   shortUrlId     String   @db.Uuid
-  clickedAt      DateTime @default(now())
+  clickedAt      DateTime @default(now()) @db.Timestamptz(3)
   referrerOrigin String?  @db.VarChar(255)
 
   shortUrl ShortUrl @relation(fields: [shortUrlId], references: [id], onDelete: Cascade)

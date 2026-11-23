@@ -1,11 +1,7 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-
-const {
-  blockShortUrl,
-  restoreShortUrl,
-} = vi.hoisted(() => ({
+import { env } from "../config/env.js";
+const { blockShortUrl, restoreShortUrl } = vi.hoisted(() => ({
   blockShortUrl: vi.fn(),
   restoreShortUrl: vi.fn(),
 }));
@@ -80,8 +76,10 @@ const restoredUrl = {
 };
 
 function adminRequest(method, path) {
-  return request(app)[method](path)
-    .set("Cookie", "lf_test_auth=admin");
+  return request(app)
+    [method](path)
+    .set("Cookie", "lf_test_auth=admin")
+    .set("Origin", env.CORS_ORIGIN);
 }
 
 describe("Admin URL moderation API routes", () => {
@@ -117,8 +115,9 @@ describe("Admin URL moderation API routes", () => {
     });
 
     it("blocks a URL for an administrator", async () => {
-      const response = await adminRequest("post", path)
-        .send({ reason: "Confirmed phishing destination." });
+      const response = await adminRequest("post", path).send({
+        reason: "Confirmed phishing destination.",
+      });
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -131,6 +130,18 @@ describe("Admin URL moderation API routes", () => {
           reason: "Confirmed phishing destination.",
         }),
       );
+    });
+
+    it("rejects admin block requests from an untrusted origin", async () => {
+      const response = await request(app)
+        .post(path)
+        .set("Cookie", "lf_test_auth=admin")
+        .set("Origin", "https://attacker.example")
+        .send({ reason: "Confirmed phishing destination." });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(blockShortUrl).not.toHaveBeenCalled();
     });
 
     it("rejects a short code with an invalid format", async () => {
@@ -164,8 +175,9 @@ describe("Admin URL moderation API routes", () => {
     });
 
     it("rejects a blocking reason shorter than 10 characters", async () => {
-      const response = await adminRequest("post", path)
-        .send({ reason: "Too short" });
+      const response = await adminRequest("post", path).send({
+        reason: "Too short",
+      });
 
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe("VALIDATION_ERROR");
@@ -173,8 +185,9 @@ describe("Admin URL moderation API routes", () => {
     });
 
     it("rejects a blocking reason longer than 500 characters", async () => {
-      const response = await adminRequest("post", path)
-        .send({ reason: "A".repeat(501) });
+      const response = await adminRequest("post", path).send({
+        reason: "A".repeat(501),
+      });
 
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe("VALIDATION_ERROR");
@@ -182,11 +195,10 @@ describe("Admin URL moderation API routes", () => {
     });
 
     it("rejects unexpected request body properties", async () => {
-      const response = await adminRequest("post", path)
-        .send({
-          reason: "Confirmed phishing destination.",
-          moderationStatus: "APPROVED",
-        });
+      const response = await adminRequest("post", path).send({
+        reason: "Confirmed phishing destination.",
+        moderationStatus: "APPROVED",
+      });
 
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe("VALIDATION_ERROR");
@@ -201,8 +213,9 @@ describe("Admin URL moderation API routes", () => {
         }),
       );
 
-      const response = await adminRequest("post", path)
-        .send({ reason: "Confirmed phishing destination." });
+      const response = await adminRequest("post", path).send({
+        reason: "Confirmed phishing destination.",
+      });
 
       expect(response.status).toBe(404);
       expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
@@ -216,8 +229,9 @@ describe("Admin URL moderation API routes", () => {
         }),
       );
 
-      const response = await adminRequest("post", path)
-        .send({ reason: "Confirmed phishing destination." });
+      const response = await adminRequest("post", path).send({
+        reason: "Confirmed phishing destination.",
+      });
 
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe("SHORT_URL_ALREADY_BLOCKED");
@@ -258,6 +272,17 @@ describe("Admin URL moderation API routes", () => {
           adminUserId: ADMIN_ID,
         }),
       );
+    });
+
+    it("rejects admin restore requests from an untrusted origin", async () => {
+      const response = await request(app)
+        .post(path)
+        .set("Cookie", "lf_test_auth=admin")
+        .set("Origin", "https://attacker.example");
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(restoreShortUrl).not.toHaveBeenCalled();
     });
 
     it("rejects an invalid short code", async () => {

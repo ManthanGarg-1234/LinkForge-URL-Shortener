@@ -1,7 +1,6 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-
+import { env } from "../config/env.js";
 const {
   getAdminAbuseReports,
   getAdminAbuseReportById,
@@ -74,8 +73,10 @@ const reportResponse = {
 };
 
 function adminRequest(method, path) {
-  return request(app)[method](path)
-    .set("Cookie", "lf_test_auth=admin");
+  return request(app)
+    [method](path)
+    .set("Cookie", "lf_test_auth=admin")
+    .set("Origin", env.CORS_ORIGIN);
 }
 
 describe("Admin moderation API routes", () => {
@@ -102,9 +103,7 @@ describe("Admin moderation API routes", () => {
 
   describe("GET /api/v1/admin/abuse-reports", () => {
     it("rejects unauthenticated requests", async () => {
-      const response = await request(app).get(
-        "/api/v1/admin/abuse-reports",
-      );
+      const response = await request(app).get("/api/v1/admin/abuse-reports");
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe("UNAUTHENTICATED");
@@ -122,10 +121,7 @@ describe("Admin moderation API routes", () => {
     });
 
     it("returns paginated reports to an administrator", async () => {
-      const response = await adminRequest(
-        "get",
-        "/api/v1/admin/abuse-reports",
-      );
+      const response = await adminRequest("get", "/api/v1/admin/abuse-reports");
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -193,13 +189,10 @@ describe("Admin moderation API routes", () => {
 
     it("returns 404 when the report does not exist", async () => {
       getAdminAbuseReportById.mockRejectedValue(
-        Object.assign(
-          new Error("The requested abuse report does not exist."),
-          {
-            statusCode: 404,
-            code: "ABUSE_REPORT_NOT_FOUND",
-          },
-        ),
+        Object.assign(new Error("The requested abuse report does not exist."), {
+          statusCode: 404,
+          code: "ABUSE_REPORT_NOT_FOUND",
+        }),
       );
 
       const response = await adminRequest(
@@ -229,6 +222,18 @@ describe("Admin moderation API routes", () => {
         .send({ status: "CONFIRMED" });
 
       expect(response.status).toBe(403);
+      expect(reviewAdminAbuseReport).not.toHaveBeenCalled();
+    });
+
+    it("rejects admin review requests from an untrusted origin", async () => {
+      const response = await request(app)
+        .post(`/api/v1/admin/abuse-reports/${REPORT_ID}/review`)
+        .set("Cookie", "lf_test_auth=admin")
+        .set("Origin", "https://attacker.example")
+        .send({ status: "CONFIRMED" });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
       expect(reviewAdminAbuseReport).not.toHaveBeenCalled();
     });
 
@@ -368,9 +373,7 @@ describe("Admin moderation API routes", () => {
       });
 
       expect(response.status).toBe(409);
-      expect(response.body.error.code).toBe(
-        "ABUSE_REPORT_ALREADY_REVIEWED",
-      );
+      expect(response.body.error.code).toBe("ABUSE_REPORT_ALREADY_REVIEWED");
     });
   });
 });

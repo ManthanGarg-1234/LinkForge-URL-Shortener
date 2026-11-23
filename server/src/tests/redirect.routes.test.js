@@ -43,7 +43,7 @@ describe("Redirect routes and asynchronous click tracking", () => {
     });
   });
 
-  it("queues a click and redirects to the destination", async () => {
+  it("queues a click with its timestamp and redirects to the destination", async () => {
     const response = await request(app)
       .get("/Ab12Cd34")
       .set("Referer", "https://google.com/search?q=linkforge");
@@ -56,6 +56,7 @@ describe("Redirect routes and asynchronous click tracking", () => {
     expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: "https://google.com",
+      clickedAt: expect.any(Date),
     });
 
     expect(recordClick).not.toHaveBeenCalled();
@@ -69,6 +70,7 @@ describe("Redirect routes and asynchronous click tracking", () => {
     expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: null,
+      clickedAt: expect.any(Date),
     });
   });
 
@@ -83,6 +85,7 @@ describe("Redirect routes and asynchronous click tracking", () => {
     expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: "https://example.org",
+      clickedAt: expect.any(Date),
     });
   });
 
@@ -94,10 +97,11 @@ describe("Redirect routes and asynchronous click tracking", () => {
     expect(enqueueClick).toHaveBeenCalledWith({
       shortUrlId: validRecord.id,
       referrerOrigin: null,
+      clickedAt: expect.any(Date),
     });
   });
 
-  it("falls back to PostgreSQL when queue submission fails", async () => {
+  it("passes the original click timestamp to PostgreSQL when queue submission fails", async () => {
     enqueueClick.mockRejectedValue(
       new Error("Redis queue unavailable"),
     );
@@ -107,10 +111,25 @@ describe("Redirect routes and asynchronous click tracking", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location).toBe("https://example.com");
 
-    expect(recordClick).toHaveBeenCalledWith({
+    expect(enqueueClick).toHaveBeenCalledOnce();
+    expect(recordClick).toHaveBeenCalledOnce();
+
+    const queuedEvent = enqueueClick.mock.calls[0][0];
+    const persistedEvent = recordClick.mock.calls[0][0];
+
+    expect(queuedEvent).toMatchObject({
       shortUrlId: validRecord.id,
       referrerOrigin: null,
+      clickedAt: expect.any(Date),
     });
+
+    expect(persistedEvent).toEqual({
+      shortUrlId: validRecord.id,
+      referrerOrigin: null,
+      clickedAt: queuedEvent.clickedAt,
+    });
+
+    expect(persistedEvent.clickedAt).toBe(queuedEvent.clickedAt);
   });
 
   it("still redirects when both queue and database fallback fail", async () => {
@@ -126,6 +145,14 @@ describe("Redirect routes and asynchronous click tracking", () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.location).toBe("https://example.com");
+
+    expect(enqueueClick).toHaveBeenCalledOnce();
+    expect(recordClick).toHaveBeenCalledOnce();
+
+    expect(enqueueClick.mock.calls[0][0].clickedAt).toBeInstanceOf(Date);
+    expect(recordClick.mock.calls[0][0].clickedAt).toBe(
+      enqueueClick.mock.calls[0][0].clickedAt,
+    );
   });
 
   it("returns 404 for invalid short codes", async () => {

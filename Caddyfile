@@ -1,0 +1,21 @@
+
+{$CADDY_SCHEME}://{$APP_DOMAIN} {
+    encode zstd gzip
+
+    # Preserve /api/v1/... when forwarding to Express.
+    handle /api/* {
+        reverse_proxy api:5000
+    }
+
+    # Everything else serves the React frontend.
+    handle {
+        reverse_proxy frontend:80
+    }
+}
+
+{$CADDY_SCHEME}://{$SHORT_DOMAIN} {
+    encode zstd gzip
+
+    # Short-link requests are handled by Express.
+    reverse_proxy api:5000
+}

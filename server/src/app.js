@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -23,10 +24,31 @@ const app = express();
 
 app.disable("x-powered-by");
 
+// Caddy is the only trusted reverse proxy in the production Docker network.
+// The API must not expose a host-published port.
+app.set("trust proxy", 1);
+
+const isProduction = env.NODE_ENV === "production";
+
 app.use(
   helmet({
     crossOriginOpenerPolicy: {
       policy: "same-origin-allow-popups",
+    },
+
+    // HSTS is appropriate only when the application is served over HTTPS.
+    strictTransportSecurity: isProduction
+      ? {
+          maxAge: 31536000,
+          includeSubDomains: true,
+        }
+      : false,
+
+    // Avoid forcing HTTPS for local HTTP development domains.
+    contentSecurityPolicy: {
+      directives: {
+        upgradeInsecureRequests: isProduction ? [] : null,
+      },
     },
   }),
 );
@@ -48,24 +70,29 @@ app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
     message: "Welcome to LinkForge API",
-    documentation: "/api/v1/docs",
+    ...(!isProduction && {
+      documentation: "/api/v1/docs",
+    }),
   });
 });
 
-// OpenAPI JSON specification.
-app.get("/api/v1/docs.json", (req, res) => {
-  res.status(200).json(openApiSpec);
-});
+// Interactive API documentation is available only outside production.
+if (!isProduction) {
+  // OpenAPI JSON specification.
+  app.get("/api/v1/docs.json", (req, res) => {
+    res.status(200).json(openApiSpec);
+  });
 
-// Interactive Swagger documentation.
-app.use(
-  "/api/v1/docs",
-  swaggerUi.serve,
-  swaggerUi.setup(openApiSpec, {
-    explorer: true,
-    customSiteTitle: "LinkForge API Documentation",
-  }),
-);
+  // Interactive Swagger documentation.
+  app.use(
+    "/api/v1/docs",
+    swaggerUi.serve,
+    swaggerUi.setup(openApiSpec, {
+      explorer: true,
+      customSiteTitle: "LinkForge API Documentation",
+    }),
+  );
+}
 
 // API routes.
 app.use("/api/v1/health", healthRoutes);

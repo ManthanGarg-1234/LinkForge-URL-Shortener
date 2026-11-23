@@ -1,4 +1,3 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
@@ -70,16 +69,11 @@ const validRecord = {
 const validUrlId = "550e8400-e29b-41d4-a716-446655440000";
 
 function authenticatedRequest(method, path) {
-  return request(app)
-    [method](path)
-    .set("Cookie", "lf_test_auth=valid");
+  return request(app)[method](path).set("Cookie", "lf_test_auth=valid");
 }
 
 function trustedAuthenticatedRequest(method, path) {
-  return authenticatedRequest(method, path).set(
-    "Origin",
-    env.CORS_ORIGIN,
-  );
+  return authenticatedRequest(method, path).set("Origin", env.CORS_ORIGIN);
 }
 
 describe("URL API routes", () => {
@@ -154,10 +148,7 @@ describe("URL API routes", () => {
     });
 
     it("rejects requests from an untrusted origin", async () => {
-      const response = await authenticatedRequest(
-        "post",
-        "/api/v1/urls",
-      )
+      const response = await authenticatedRequest("post", "/api/v1/urls")
         .set("Origin", "https://attacker.example")
         .send({
           originalUrl: "https://example.com",
@@ -198,10 +189,7 @@ describe("URL API routes", () => {
 
   describe("GET /api/v1/urls", () => {
     it("returns only the authenticated user's URL records", async () => {
-      const response = await authenticatedRequest(
-        "get",
-        "/api/v1/urls",
-      );
+      const response = await authenticatedRequest("get", "/api/v1/urls");
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -417,47 +405,56 @@ describe("URL API routes", () => {
 
       expect(resolveShortCode).toHaveBeenCalledWith("Ab12Cd34");
 
-      expect(enqueueClick).toHaveBeenCalledWith({
-        shortUrlId: validRecord.id,
-        referrerOrigin: null,
-      });
+      expect(enqueueClick).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shortUrlId: validRecord.id,
+          referrerOrigin: null,
+          clickedAt: expect.any(Date),
+        }),
+      );
 
       expect(recordClick).not.toHaveBeenCalled();
     });
 
-    it("queues only the referrer origin", async () => {
+    it("queues only the referrer origin with the click timestamp", async () => {
       const response = await request(app)
         .get("/Ab12Cd34")
         .set("Referer", "https://google.com/search?q=private");
 
       expect(response.status).toBe(302);
 
-      expect(enqueueClick).toHaveBeenCalledWith({
-        shortUrlId: validRecord.id,
-        referrerOrigin: "https://google.com",
-      });
+      expect(enqueueClick).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shortUrlId: validRecord.id,
+          referrerOrigin: "https://google.com",
+          clickedAt: expect.any(Date),
+        }),
+      );
     });
 
     it("falls back to direct database recording when queue submission fails", async () => {
-      enqueueClick.mockRejectedValue(
-        new Error("Redis queue unavailable"),
-      );
+      enqueueClick.mockRejectedValue(new Error("Redis queue unavailable"));
 
       const response = await request(app).get("/Ab12Cd34");
 
       expect(response.status).toBe(302);
       expect(response.headers.location).toBe("https://example.com");
 
-      expect(recordClick).toHaveBeenCalledWith({
-        shortUrlId: validRecord.id,
-        referrerOrigin: null,
-      });
+      expect(enqueueClick).toHaveBeenCalledTimes(1);
+      expect(recordClick).toHaveBeenCalledTimes(1);
+
+      const queuedClick = enqueueClick.mock.calls[0][0];
+
+      expect(queuedClick.clickedAt).toBeInstanceOf(Date);
+
+      expect(recordClick).toHaveBeenCalledWith(queuedClick);
+      expect(recordClick.mock.calls[0][0].clickedAt).toBe(
+        queuedClick.clickedAt,
+      );
     });
 
     it("still redirects when both queue and database recording fail", async () => {
-      enqueueClick.mockRejectedValue(
-        new Error("Redis queue unavailable"),
-      );
+      enqueueClick.mockRejectedValue(new Error("Redis queue unavailable"));
 
       recordClick.mockRejectedValue(
         new Error("Analytics database unavailable"),
