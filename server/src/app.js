@@ -5,7 +5,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import swaggerUi from "swagger-ui-express";
 
-import { env } from "./config/env.js";
+import { allowedOrigins, env } from "./config/env.js";
 import { openApiSpec } from "./config/openapi.js";
 
 import healthRoutes from "./routes/health.routes.js";
@@ -53,9 +53,10 @@ app.use(
   }),
 );
 
+// CORS allows only explicitly configured origins.
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: allowedOrigins,
     credentials: true,
   }),
 );

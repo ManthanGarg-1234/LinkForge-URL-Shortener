@@ -1,8 +1,9 @@
+
 import "dotenv/config";
 import { z } from "zod";
 
-// APP_BASE_URL must be an origin, not a URL containing a path or query.
-const appBaseUrlSchema = z.url().refine(
+// Validate HTTP(S) origins without paths, credentials, queries or hashes.
+const originSchema = z.url().refine(
   (value) => {
     try {
       const url = new URL(value);
@@ -22,9 +23,12 @@ const appBaseUrlSchema = z.url().refine(
   },
   {
     message:
-      "APP_BASE_URL must be an HTTP(S) origin without credentials, path, query, or hash.",
+      "Origin must be an HTTP(S) origin without credentials, path, query, or hash.",
   },
 );
+
+// APP_BASE_URL must be an origin.
+const appBaseUrlSchema = originSchema;
 
 const redisUrlSchema = z
   .string()
@@ -35,7 +39,8 @@ const redisUrlSchema = z
         const url = new URL(value);
 
         return (
-          ["redis:", "rediss:"].includes(url.protocol) && Boolean(url.hostname)
+          ["redis:", "rediss:"].includes(url.protocol) &&
+          Boolean(url.hostname)
         );
       } catch {
         return false;
@@ -54,7 +59,18 @@ const envSchema = z
 
     PORT: z.coerce.number().int().min(1).max(65535).default(5000),
 
-    CORS_ORIGIN: z.url().default("http://localhost:5173"),
+    CORS_ORIGIN: originSchema.default("http://localhost:5173"),
+
+    ALLOWED_ORIGINS: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(originSchema)),
 
     APP_BASE_URL: appBaseUrlSchema.default("http://localhost:5000"),
 
@@ -95,7 +111,10 @@ const envSchema = z
     EMAIL_FROM_NAME: z.string().min(1).default("LinkForge"),
   })
   .superRefine((values, context) => {
-    if (values.NODE_ENV === "production" && !values.AUTH_ACCESS_TOKEN_SECRET) {
+    if (
+      values.NODE_ENV === "production" &&
+      !values.AUTH_ACCESS_TOKEN_SECRET
+    ) {
       context.addIssue({
         code: "custom",
         path: ["AUTH_ACCESS_TOKEN_SECRET"],
@@ -151,5 +170,13 @@ if (!result.success) {
 }
 
 export const env = Object.freeze(result.data);
+
+export const allowedOrigins = Object.freeze([
+  ...new Set([
+    env.CORS_ORIGIN,
+    ...env.ALLOWED_ORIGINS,
+    ...(env.NODE_ENV === "development" ? [env.APP_BASE_URL] : []),
+  ]),
+]);
 
 export const isEmailConfigured = Boolean(env.BREVO_API_KEY && env.EMAIL_FROM);
