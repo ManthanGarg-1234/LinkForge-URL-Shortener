@@ -47,3 +47,4 @@ temp/
 
 # Private credentials
 /server/secrets/
+.neon

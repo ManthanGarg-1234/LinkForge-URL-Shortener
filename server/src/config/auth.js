@@ -19,7 +19,7 @@ export const REFRESH_TOKEN_TTL_SECONDS =
 export const ACCESS_TOKEN_COOKIE_OPTIONS = Object.freeze({
   httpOnly: true,
   secure: env.NODE_ENV === "production",
-  sameSite: "lax",
+  sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   path: "/api/v1",
   maxAge: ACCESS_TOKEN_TTL_SECONDS * 1000,
 });
@@ -27,7 +27,7 @@ export const ACCESS_TOKEN_COOKIE_OPTIONS = Object.freeze({
 export const REFRESH_TOKEN_COOKIE_OPTIONS = Object.freeze({
   httpOnly: true,
   secure: env.NODE_ENV === "production",
-  sameSite: "lax",
+  sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   path: "/api/v1/auth",
   maxAge: REFRESH_TOKEN_TTL_MS,
 });
@@ -35,14 +35,14 @@ export const REFRESH_TOKEN_COOKIE_OPTIONS = Object.freeze({
 export const ACCESS_TOKEN_CLEAR_OPTIONS = Object.freeze({
   httpOnly: true,
   secure: env.NODE_ENV === "production",
-  sameSite: "lax",
+  sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   path: "/api/v1",
 });
 
 export const REFRESH_TOKEN_CLEAR_OPTIONS = Object.freeze({
   httpOnly: true,
   secure: env.NODE_ENV === "production",
-  sameSite: "lax",
+  sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   path: "/api/v1/auth",
 });
 
