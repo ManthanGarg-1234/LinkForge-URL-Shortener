@@ -1,4 +1,3 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
@@ -6,6 +5,7 @@ const {
   prismaMock,
   registerUserMock,
   loginUserMock,
+  updateUserProfileMock,
   verifyEmailAddressMock,
   sendVerificationEmailMock,
   rotateRefreshTokenMock,
@@ -19,6 +19,7 @@ const {
   },
   registerUserMock: vi.fn(),
   loginUserMock: vi.fn(),
+  updateUserProfileMock: vi.fn(),
   verifyEmailAddressMock: vi.fn(),
   sendVerificationEmailMock: vi.fn(),
   rotateRefreshTokenMock: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../lib/prisma.js", () => ({
 vi.mock("../services/auth.service.js", () => ({
   registerUser: registerUserMock,
   loginUser: loginUserMock,
+  updateUserProfile: updateUserProfileMock,
 }));
 
 vi.mock("../services/email-verification.service.js", () => ({
@@ -59,10 +61,10 @@ vi.mock("../utils/token.utils.js", async (importOriginal) => {
 
 import app from "../app.js";
 import { env } from "../config/env.js";
-import {
-  ACCESS_TOKEN_COOKIE,
-  REFRESH_TOKEN_COOKIE,
-} from "../config/auth.js";
+import { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from "../config/auth.js";
+
+const createdAt = new Date("2026-01-01T00:00:00.000Z");
+const emailVerifiedAt = new Date("2026-01-02T00:00:00.000Z");
 
 const validUser = {
   id: "user-123",
@@ -70,8 +72,8 @@ const validUser = {
   name: "Test User",
   role: "USER",
   status: "ACTIVE",
-  emailVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  emailVerifiedAt,
+  createdAt,
 };
 
 const validSession = {
@@ -89,7 +91,8 @@ const activeDatabaseSession = {
     name: "Test User",
     role: "USER",
     status: "ACTIVE",
-    emailVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+    emailVerifiedAt,
+    createdAt,
   },
 };
 
@@ -102,7 +105,7 @@ function trustedRequest(method, path) {
 function authenticatedRequest(method, path) {
   return trustedRequest(method, path).set(
     "Cookie",
-    `${ACCESS_TOKEN_COOKIE}=valid-access-token`
+    `${ACCESS_TOKEN_COOKIE}=valid-access-token`,
   );
 }
 
@@ -120,6 +123,11 @@ describe("Authentication API routes", () => {
       authenticated: true,
       user: validUser,
       session: validSession,
+    });
+
+    updateUserProfileMock.mockResolvedValue({
+      ...validUser,
+      name: "Updated User",
     });
 
     verifyEmailAddressMock.mockResolvedValue({
@@ -157,7 +165,7 @@ describe("Authentication API routes", () => {
     it("should register a user and send a verification email", async () => {
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/register"
+        "/api/v1/auth/register",
       ).send({
         name: "Test User",
         email: "user@example.com",
@@ -191,7 +199,7 @@ describe("Authentication API routes", () => {
 
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/register"
+        "/api/v1/auth/register",
       ).send({
         name: "Test User",
         email: "user@example.com",
@@ -206,7 +214,7 @@ describe("Authentication API routes", () => {
     it("should reject invalid registration input", async () => {
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/register"
+        "/api/v1/auth/register",
       ).send({
         name: "A",
         email: "not-an-email",
@@ -240,7 +248,7 @@ describe("Authentication API routes", () => {
 
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/verify-email"
+        "/api/v1/auth/verify-email",
       ).send({ token });
 
       expect(response.status).toBe(200);
@@ -256,7 +264,7 @@ describe("Authentication API routes", () => {
 
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/verify-email"
+        "/api/v1/auth/verify-email",
       ).send({
         token: "verification-token-12345678901234567890",
       });
@@ -268,7 +276,7 @@ describe("Authentication API routes", () => {
     it("should reject a missing verification token", async () => {
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/verify-email"
+        "/api/v1/auth/verify-email",
       ).send({});
 
       expect(response.status).toBe(400);
@@ -279,10 +287,7 @@ describe("Authentication API routes", () => {
 
   describe("POST /api/v1/auth/login", () => {
     it("should authenticate a user and set HTTP-only cookies", async () => {
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/login"
-      ).send({
+      const response = await trustedRequest("post", "/api/v1/auth/login").send({
         email: "user@example.com",
         password: "StrongPassword123!",
       });
@@ -296,11 +301,11 @@ describe("Authentication API routes", () => {
       expect(cookies).toHaveLength(2);
 
       const accessCookie = cookies.find((cookie) =>
-        cookie.startsWith(`${ACCESS_TOKEN_COOKIE}=`)
+        cookie.startsWith(`${ACCESS_TOKEN_COOKIE}=`),
       );
 
       const refreshCookie = cookies.find((cookie) =>
-        cookie.startsWith(`${REFRESH_TOKEN_COOKIE}=`)
+        cookie.startsWith(`${REFRESH_TOKEN_COOKIE}=`),
       );
 
       expect(accessCookie).toContain("HttpOnly");
@@ -316,10 +321,7 @@ describe("Authentication API routes", () => {
         reason: "INVALID_CREDENTIALS",
       });
 
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/login"
-      ).send({
+      const response = await trustedRequest("post", "/api/v1/auth/login").send({
         email: "user@example.com",
         password: "WrongPassword123!",
       });
@@ -330,10 +332,7 @@ describe("Authentication API routes", () => {
     });
 
     it("should reject invalid login input", async () => {
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/login"
-      ).send({
+      const response = await trustedRequest("post", "/api/v1/auth/login").send({
         email: "invalid-email",
         password: "",
       });
@@ -346,19 +345,15 @@ describe("Authentication API routes", () => {
 
   describe("POST /api/v1/auth/refresh", () => {
     it("should rotate the refresh token and issue new cookies", async () => {
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/refresh"
-      ).set(
-        "Cookie",
-        `${REFRESH_TOKEN_COOKIE}=old-refresh-token-123456789`
-      ).send({});
+      const response = await trustedRequest("post", "/api/v1/auth/refresh")
+        .set("Cookie", `${REFRESH_TOKEN_COOKIE}=old-refresh-token-123456789`)
+        .send({});
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
 
       expect(rotateRefreshTokenMock).toHaveBeenCalledWith(
-        "old-refresh-token-123456789"
+        "old-refresh-token-123456789",
       );
 
       expect(response.headers["set-cookie"]).toHaveLength(2);
@@ -367,7 +362,7 @@ describe("Authentication API routes", () => {
     it("should reject a missing refresh token and clear cookies", async () => {
       const response = await trustedRequest(
         "post",
-        "/api/v1/auth/refresh"
+        "/api/v1/auth/refresh",
       ).send({});
 
       expect(response.status).toBe(401);
@@ -383,13 +378,9 @@ describe("Authentication API routes", () => {
         reason: "INVALID_TOKEN",
       });
 
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/refresh"
-      ).set(
-        "Cookie",
-        `${REFRESH_TOKEN_COOKIE}=invalid-refresh-token-123456`
-      ).send({});
+      const response = await trustedRequest("post", "/api/v1/auth/refresh")
+        .set("Cookie", `${REFRESH_TOKEN_COOKIE}=invalid-refresh-token-123456`)
+        .send({});
 
       expect(response.status).toBe(401);
       expect(response.headers["set-cookie"]).toHaveLength(2);
@@ -400,7 +391,7 @@ describe("Authentication API routes", () => {
     it("should revoke the session and clear authentication cookies", async () => {
       const response = await authenticatedRequest(
         "post",
-        "/api/v1/auth/logout"
+        "/api/v1/auth/logout",
       ).send({});
 
       expect(response.status).toBe(200);
@@ -415,10 +406,9 @@ describe("Authentication API routes", () => {
     });
 
     it("should reject logout without authentication", async () => {
-      const response = await trustedRequest(
-        "post",
-        "/api/v1/auth/logout"
-      ).send({});
+      const response = await trustedRequest("post", "/api/v1/auth/logout").send(
+        {},
+      );
 
       expect(response.status).toBe(401);
       expect(revokeSessionMock).not.toHaveBeenCalled();
@@ -426,11 +416,8 @@ describe("Authentication API routes", () => {
   });
 
   describe("GET /api/v1/auth/me", () => {
-    it("should return the authenticated user's safe profile", async () => {
-      const response = await authenticatedRequest(
-        "get",
-        "/api/v1/auth/me"
-      );
+    it("should return the authenticated user's safe profile and account metadata", async () => {
+      const response = await authenticatedRequest("get", "/api/v1/auth/me");
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -440,15 +427,16 @@ describe("Authentication API routes", () => {
         email: "user@example.com",
         name: "Test User",
         role: "USER",
+        status: "ACTIVE",
+        emailVerifiedAt: emailVerifiedAt.toISOString(),
+        createdAt: createdAt.toISOString(),
       });
 
       expect(response.body.data.user.passwordHash).toBeUndefined();
     });
 
     it("should reject a request without authentication", async () => {
-      const response = await request(app).get(
-        "/api/v1/auth/me"
-      );
+      const response = await request(app).get("/api/v1/auth/me");
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe("UNAUTHENTICATED");
@@ -457,13 +445,97 @@ describe("Authentication API routes", () => {
     it("should reject a revoked session", async () => {
       prismaMock.session.findFirst.mockResolvedValue(null);
 
-      const response = await authenticatedRequest(
-        "get",
-        "/api/v1/auth/me"
-      );
+      const response = await authenticatedRequest("get", "/api/v1/auth/me");
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe("UNAUTHENTICATED");
+    });
+  });
+
+  describe("PATCH /api/v1/auth/me", () => {
+    it("should update the authenticated user's display name", async () => {
+      const response = await authenticatedRequest(
+        "patch",
+        "/api/v1/auth/me",
+      ).send({
+        name: "Updated User",
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.message).toBe("Profile updated successfully.");
+      expect(response.body.data.user.name).toBe("Updated User");
+
+      expect(updateUserProfileMock).toHaveBeenCalledWith({
+        userId: "user-123",
+        input: {
+          name: "Updated User",
+        },
+      });
+    });
+
+    it("should reject a display name shorter than two characters", async () => {
+      const response = await authenticatedRequest(
+        "patch",
+        "/api/v1/auth/me",
+      ).send({
+        name: "A",
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateUserProfileMock).not.toHaveBeenCalled();
+    });
+
+    it("should reject an empty profile update", async () => {
+      const response = await authenticatedRequest(
+        "patch",
+        "/api/v1/auth/me",
+      ).send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateUserProfileMock).not.toHaveBeenCalled();
+    });
+
+    it("should reject attempts to modify protected account fields", async () => {
+      const response = await authenticatedRequest(
+        "patch",
+        "/api/v1/auth/me",
+      ).send({
+        name: "Updated User",
+        role: "ADMIN",
+        status: "ACTIVE",
+        email: "attacker@example.com",
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateUserProfileMock).not.toHaveBeenCalled();
+    });
+
+    it("should reject a profile update without authentication", async () => {
+      const response = await trustedRequest("patch", "/api/v1/auth/me").send({
+        name: "Updated User",
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe("UNAUTHENTICATED");
+      expect(updateUserProfileMock).not.toHaveBeenCalled();
+    });
+
+    it("should reject an untrusted origin", async () => {
+      const response = await request(app)
+        .patch("/api/v1/auth/me")
+        .set("Origin", "https://attacker.example")
+        .set("Cookie", `${ACCESS_TOKEN_COOKIE}=valid-access-token`)
+        .send({
+          name: "Updated User",
+        });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(updateUserProfileMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,4 +1,3 @@
-
 import { prisma } from "../lib/prisma.js";
 import { redis } from "../lib/redis.js";
 import { generateShortCode } from "../utils/short-code.utils.js";
@@ -71,10 +70,7 @@ export async function invalidateShortUrlCache(shortCode) {
   try {
     await redis.del(getCacheKey(shortCode));
   } catch (error) {
-    console.warn(
-      "Short URL cache invalidation failed:",
-      error.message,
-    );
+    console.warn("Short URL cache invalidation failed:", error.message);
   }
 }
 
@@ -141,18 +137,13 @@ async function cacheResolvedShortUrl(shortCode, record) {
         id: record.id,
         originalUrl: record.originalUrl,
         isActive: record.isActive,
-        expiresAt: record.expiresAt
-          ? record.expiresAt.toISOString()
-          : null,
+        expiresAt: record.expiresAt ? record.expiresAt.toISOString() : null,
       }),
       "EX",
       ttl,
     );
   } catch (error) {
-    console.warn(
-      "Short URL cache write failed:",
-      error.message,
-    );
+    console.warn("Short URL cache write failed:", error.message);
   }
 }
 
@@ -232,6 +223,92 @@ export async function getUserShortUrls({ userId, page = 1, limit = 20 }) {
       totalPages: Math.ceil(total / limit),
     },
   };
+}
+
+/**
+ * Updates the destination and/or expiration of an existing short URL.
+ *
+ * Ownership is enforced in every database mutation using both
+ * the URL ID and authenticated user ID.
+ *
+ * The short code, activation state, moderation state, and click
+ * history are intentionally left unchanged.
+ */
+export async function updateShortUrl({ userId, id, updates }) {
+  if (!userId || !id || !updates || typeof updates !== "object") {
+    throw new TypeError("User ID, URL ID, and update data are required.");
+  }
+
+  const data = {};
+
+  if (Object.hasOwn(updates, "originalUrl")) {
+    if (
+      typeof updates.originalUrl !== "string" ||
+      !updates.originalUrl.trim()
+    ) {
+      throw new TypeError("A valid destination URL is required.");
+    }
+
+    data.originalUrl = updates.originalUrl;
+  }
+
+  if (Object.hasOwn(updates, "expiresAt")) {
+    if (updates.expiresAt === null) {
+      data.expiresAt = null;
+    } else {
+      const expirationDate = new Date(updates.expiresAt);
+
+      if (!Number.isFinite(expirationDate.getTime())) {
+        throw new TypeError("A valid expiration date is required.");
+      }
+
+      if (expirationDate.getTime() <= Date.now()) {
+        throw new TypeError("Expiration date must be in the future.");
+      }
+
+      data.expiresAt = expirationDate;
+    }
+  }
+
+  if (Object.keys(data).length === 0) {
+    throw new TypeError("At least one editable field is required.");
+  }
+
+  const existingUrl = await prisma.shortUrl.findFirst({
+    where: {
+      id,
+      userId,
+    },
+    select: {
+      shortCode: true,
+    },
+  });
+
+  if (!existingUrl) {
+    return null;
+  }
+
+  const result = await prisma.shortUrl.updateMany({
+    where: {
+      id,
+      userId,
+    },
+    data,
+  });
+
+  if (result.count === 0) {
+    return null;
+  }
+
+  await invalidateShortUrlCache(existingUrl.shortCode);
+
+  return prisma.shortUrl.findFirst({
+    where: {
+      id,
+      userId,
+    },
+    select: shortUrlSelect,
+  });
 }
 
 export async function updateShortUrlStatus({ userId, id, isActive }) {
@@ -349,10 +426,7 @@ export async function resolveShortCode(shortCode) {
     if (!cachedRecord) {
       await invalidateShortUrlCache(shortCode);
     } else {
-      if (
-        cachedRecord.expiresAt &&
-        cachedRecord.expiresAt <= new Date()
-      ) {
+      if (cachedRecord.expiresAt && cachedRecord.expiresAt <= new Date()) {
         await invalidateShortUrlCache(shortCode);
         return null;
       }
@@ -411,10 +485,7 @@ export async function recordClick({
     throw new TypeError("Short URL ID is required.");
   }
 
-  if (
-    !(clickedAt instanceof Date) ||
-    !Number.isFinite(clickedAt.getTime())
-  ) {
+  if (!(clickedAt instanceof Date) || !Number.isFinite(clickedAt.getTime())) {
     throw new TypeError("A valid click timestamp is required.");
   }
 

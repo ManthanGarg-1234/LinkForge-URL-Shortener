@@ -1,16 +1,13 @@
-
 import argon2 from "argon2";
 
 import { prisma } from "../lib/prisma.js";
-import { registerSchema, loginSchema } from "../validators/auth.schemas.js";
 import {
-  hashPassword,
-  verifyPassword,
-} from "../utils/password.utils.js";
-import {
-  createOpaqueToken,
-  hashToken,
-} from "../utils/token.utils.js";
+  registerSchema,
+  loginSchema,
+  updateProfileSchema,
+} from "../validators/auth.schemas.js";
+import { hashPassword, verifyPassword } from "../utils/password.utils.js";
+import { createOpaqueToken, hashToken } from "../utils/token.utils.js";
 import { createSession } from "./session.service.js";
 
 const EMAIL_VERIFICATION_TTL_HOURS = 24;
@@ -35,7 +32,7 @@ const DUMMY_PASSWORD_HASH_PROMISE = argon2.hash(
     timeCost: 2,
     parallelism: 1,
     hashLength: 32,
-  }
+  },
 );
 
 export async function registerUser(input) {
@@ -46,7 +43,7 @@ export async function registerUser(input) {
   const verificationTokenHash = hashToken(rawVerificationToken);
 
   const expiresAt = new Date(
-    Date.now() + EMAIL_VERIFICATION_TTL_HOURS * 60 * 60 * 1000
+    Date.now() + EMAIL_VERIFICATION_TTL_HOURS * 60 * 60 * 1000,
   );
 
   try {
@@ -111,10 +108,7 @@ export async function loginUser(input, metadata = {}) {
   if (!user || !user.passwordHash) {
     const dummyHash = await DUMMY_PASSWORD_HASH_PROMISE;
 
-    await verifyPassword(
-      validatedInput.password,
-      dummyHash
-    );
+    await verifyPassword(validatedInput.password, dummyHash);
 
     return {
       authenticated: false,
@@ -124,7 +118,7 @@ export async function loginUser(input, metadata = {}) {
 
   const passwordIsValid = await verifyPassword(
     validatedInput.password,
-    user.passwordHash
+    user.passwordHash,
   );
 
   if (!passwordIsValid) {
@@ -154,14 +148,31 @@ export async function loginUser(input, metadata = {}) {
     ipAddress: metadata.ipAddress,
   });
 
-  const {
-    passwordHash: _passwordHash,
-    ...safeUser
-  } = user;
+  const { passwordHash: _passwordHash, ...safeUser } = user;
 
   return {
     authenticated: true,
     user: safeUser,
     session,
   };
+}
+
+/**
+ * Updates the authenticated user's editable profile fields.
+ *
+ * The caller must supply the user ID obtained from the authenticated
+ * server-side session. Only the display name is editable here.
+ */
+export async function updateUserProfile({ userId, input }) {
+  const validatedInput = updateProfileSchema.parse(input);
+
+  return prisma.user.update({
+    where: {
+      id: userId,
+    },
+    data: {
+      name: validatedInput.name,
+    },
+    select: SAFE_USER_FIELDS,
+  });
 }

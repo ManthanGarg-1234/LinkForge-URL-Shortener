@@ -1,4 +1,3 @@
-
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api/v1"
 ).replace(/\/+$/, "");
@@ -8,12 +7,7 @@ const AUTH_REFRESH_LOCK_NAME = "linkforge-auth-session-refresh";
 let sessionRestorePromise = null;
 
 async function request(endpoint, options = {}) {
-  const {
-    method = "GET",
-    body,
-    headers = {},
-    ...customOptions
-  } = options;
+  const { method = "GET", body, headers = {}, ...customOptions } = options;
 
   const requestHeaders = {
     Accept: "application/json",
@@ -176,6 +170,10 @@ export const authApi = {
     return api.get("/auth/me");
   },
 
+  updateProfile(payload) {
+    return api.patch("/auth/me", payload);
+  },
+
   forgotPassword(email) {
     return api.post("/auth/forgot-password", { email });
   },
@@ -202,6 +200,10 @@ export const urlApi = {
     return api.get(`/urls?${params.toString()}`);
   },
 
+  updateShortUrl(id, payload) {
+    return api.patch(`/urls/${encodeURIComponent(id)}`, payload);
+  },
+
   updateShortUrlStatus(id, isActive) {
     return api.patch(`/urls/${encodeURIComponent(id)}/status`, {
       isActive,
@@ -210,6 +212,10 @@ export const urlApi = {
 
   deleteShortUrl(id) {
     return api.delete(`/urls/${encodeURIComponent(id)}`);
+  },
+
+  submitAbuseReport(payload) {
+    return api.post("/abuse-reports", payload);
   },
 };
 

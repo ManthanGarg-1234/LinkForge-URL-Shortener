@@ -1,5 +1,4 @@
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   AlertTriangle,
@@ -150,14 +149,10 @@ function ReportDetailsModal({
               <StatusBadge status={report.reason} />
               {shortUrl && (
                 <StatusBadge
-                  status={
-                    shortUrl.isActive ? "ACTIVE" : "INACTIVE"
-                  }
+                  status={shortUrl.isActive ? "ACTIVE" : "INACTIVE"}
                 />
               )}
-              {shortUrl && (
-                <StatusBadge status={shortUrl.moderationStatus} />
-              )}
+              {shortUrl && <StatusBadge status={shortUrl.moderationStatus} />}
             </div>
 
             <div className="mt-5 rounded-xl border border-white/[0.07] bg-[#0b101d] px-4">
@@ -189,9 +184,7 @@ function ReportDetailsModal({
                 )}
               </DetailRow>
 
-              <DetailRow label="Report reason">
-                {report.reason}
-              </DetailRow>
+              <DetailRow label="Report reason">{report.reason}</DetailRow>
 
               <DetailRow label="Reporter description">
                 <p className="whitespace-pre-wrap">
@@ -355,7 +348,10 @@ function ReviewReportModal({
               {isConfirming ? "Confirm abuse report" : "Dismiss abuse report"}
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
-              Short code: <span className="font-mono text-zinc-300">{report.shortCode}</span>
+              Short code:{" "}
+              <span className="font-mono text-zinc-300">
+                {report.shortCode}
+              </span>
             </p>
           </div>
 
@@ -435,8 +431,7 @@ function BlockUrlModal({
   if (!url) return null;
 
   const trimmedReason = reason.trim();
-  const validReason =
-    trimmedReason.length >= 10 && trimmedReason.length <= 500;
+  const validReason = trimmedReason.length >= 10 && trimmedReason.length <= 500;
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
@@ -452,14 +447,12 @@ function BlockUrlModal({
               <Ban size={21} />
             </div>
             <div>
-              <h2
-                id="block-url-title"
-                className="text-lg font-bold text-white"
-              >
+              <h2 id="block-url-title" className="text-lg font-bold text-white">
                 Block short URL
               </h2>
               <p className="mt-1 text-sm text-zinc-400">
-                Code: <span className="font-mono text-red-300">{url.shortCode}</span>
+                Code:{" "}
+                <span className="font-mono text-red-300">{url.shortCode}</span>
               </p>
             </div>
           </div>
@@ -559,8 +552,13 @@ export default function AdminAbuseReports({ onRefresh }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const reportListRequestId = useRef(0);
+  const reportDetailsRequestId = useRef(0);
+
   const loadReports = useCallback(
     async (page = 1) => {
+      const requestId = ++reportListRequestId.current;
+
       setLoading(true);
       setError("");
 
@@ -572,6 +570,8 @@ export default function AdminAbuseReports({ onRefresh }) {
           reason: reasonFilter,
           search: appliedSearch,
         });
+
+        if (requestId !== reportListRequestId.current) return;
 
         const data = response?.data || {};
 
@@ -585,35 +585,69 @@ export default function AdminAbuseReports({ onRefresh }) {
           },
         );
       } catch (err) {
-        setError(getErrorMessage(err));
+        if (requestId === reportListRequestId.current) {
+          setError(getErrorMessage(err));
+        }
       } finally {
-        setLoading(false);
+        if (requestId === reportListRequestId.current) {
+          setLoading(false);
+        }
       }
     },
     [statusFilter, reasonFilter, appliedSearch],
   );
 
-  useEffect(() => {
-    loadReports(1);
-  }, [loadReports]);
+  const loadReportDetails = useCallback(async (id) => {
+    const requestId = ++reportDetailsRequestId.current;
 
-  async function handleViewReport(id) {
     setSelectedReport(null);
     setDetailsLoading(true);
     setError("");
 
     try {
       const response = await adminApi.getAbuseReport(id);
-      setSelectedReport(response?.data?.report || null);
 
-      if (!response?.data?.report) {
+      if (requestId !== reportDetailsRequestId.current) return;
+
+      const report = response?.data?.report || null;
+      setSelectedReport(report);
+
+      if (!report) {
         setError("The server did not return the requested report.");
       }
     } catch (err) {
-      setError(getErrorMessage(err));
+      if (requestId === reportDetailsRequestId.current) {
+        setError(getErrorMessage(err));
+      }
     } finally {
-      setDetailsLoading(false);
+      if (requestId === reportDetailsRequestId.current) {
+        setDetailsLoading(false);
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    loadReports(1);
+
+    return () => {
+      reportListRequestId.current += 1;
+    };
+  }, [loadReports]);
+
+  useEffect(() => {
+    return () => {
+      reportDetailsRequestId.current += 1;
+    };
+  }, []);
+
+  function handleViewReport(id) {
+    loadReportDetails(id);
+  }
+
+  function closeReportDetails() {
+    reportDetailsRequestId.current += 1;
+    setSelectedReport(null);
+    setDetailsLoading(false);
   }
 
   function openReview(report, status) {
@@ -625,20 +659,24 @@ export default function AdminAbuseReports({ onRefresh }) {
   async function handleReviewReport() {
     if (!reviewTarget || !reviewStatus || actionLoading) return;
 
+    const reviewedReportId = reviewTarget.id;
+    const reviewedShortCode = reviewTarget.shortCode;
+    const selectedReportId = selectedReport?.id;
+
     setActionLoading(true);
     setError("");
     setSuccess("");
 
     try {
-      await adminApi.reviewAbuseReport(reviewTarget.id, {
+      await adminApi.reviewAbuseReport(reviewedReportId, {
         status: reviewStatus,
         resolutionNote,
       });
 
       setSuccess(
         reviewStatus === "CONFIRMED"
-          ? `Report for ${reviewTarget.shortCode} was confirmed. The URL has not been blocked automatically.`
-          : `Report for ${reviewTarget.shortCode} was dismissed.`,
+          ? `Report for ${reviewedShortCode} was confirmed. The URL has not been blocked automatically.`
+          : `Report for ${reviewedShortCode} was dismissed.`,
       );
 
       setReviewTarget(null);
@@ -647,9 +685,8 @@ export default function AdminAbuseReports({ onRefresh }) {
 
       await loadReports(pagination.page);
 
-      if (selectedReport?.id === reviewTarget.id) {
-        const response = await adminApi.getAbuseReport(reviewTarget.id);
-        setSelectedReport(response?.data?.report || null);
+      if (selectedReportId === reviewedReportId) {
+        await loadReportDetails(reviewedReportId);
       }
 
       onRefresh?.();
@@ -670,25 +707,26 @@ export default function AdminAbuseReports({ onRefresh }) {
       return;
     }
 
+    const shortCode = blockTarget.shortCode;
+    const selectedReportId =
+      selectedReport?.shortCode === shortCode ? selectedReport.id : null;
+
     setActionLoading(true);
     setError("");
     setSuccess("");
 
     try {
-      await adminApi.blockShortUrl(blockTarget.shortCode, reason);
+      await adminApi.blockShortUrl(shortCode, reason);
 
       setSuccess(
-        `Short URL ${blockTarget.shortCode} has been blocked. Its owner activation setting was preserved.`,
+        `Short URL ${shortCode} has been blocked. Its owner activation setting was preserved.`,
       );
-
-      const shortCode = blockTarget.shortCode;
 
       setBlockTarget(null);
       setBlockReason("");
 
-      if (selectedReport?.shortCode === shortCode) {
-        const response = await adminApi.getAbuseReport(selectedReport.id);
-        setSelectedReport(response?.data?.report || null);
+      if (selectedReportId) {
+        await loadReportDetails(selectedReportId);
       }
 
       await loadReports(pagination.page);
@@ -709,6 +747,8 @@ export default function AdminAbuseReports({ onRefresh }) {
 
     if (!confirmed) return;
 
+    const selectedReportId = selectedReport?.id;
+
     setActionLoading(true);
     setError("");
     setSuccess("");
@@ -720,9 +760,8 @@ export default function AdminAbuseReports({ onRefresh }) {
         `Short URL ${url.shortCode} has been restored. The owner's activation setting was preserved.`,
       );
 
-      if (selectedReport?.id) {
-        const response = await adminApi.getAbuseReport(selectedReport.id);
-        setSelectedReport(response?.data?.report || null);
+      if (selectedReportId) {
+        await loadReportDetails(selectedReportId);
       }
 
       await loadReports(pagination.page);
@@ -734,7 +773,7 @@ export default function AdminAbuseReports({ onRefresh }) {
     }
   }
 
-  async function handleSearch(event) {
+  function handleSearch(event) {
     event.preventDefault();
     setAppliedSearch(searchInput.trim());
   }
@@ -918,7 +957,8 @@ export default function AdminAbuseReports({ onRefresh }) {
                         No matching abuse reports
                       </p>
                       <p className="mt-1 text-xs leading-5 text-zinc-500">
-                        Change the filters or search terms to view other reports.
+                        Change the filters or search terms to view other
+                        reports.
                       </p>
                     </div>
                   </td>
@@ -937,7 +977,8 @@ export default function AdminAbuseReports({ onRefresh }) {
                         </span>
                       </div>
                       <p className="mt-1 max-w-[230px] truncate text-xs text-zinc-500">
-                        {report.shortUrl?.originalUrl || "URL record unavailable"}
+                        {report.shortUrl?.originalUrl ||
+                          "URL record unavailable"}
                       </p>
                     </td>
 
@@ -1000,9 +1041,7 @@ export default function AdminAbuseReports({ onRefresh }) {
             </button>
 
             <button
-              disabled={
-                loading || pagination.page >= pagination.totalPages
-              }
+              disabled={loading || pagination.page >= pagination.totalPages}
               onClick={() => loadReports(pagination.page + 1)}
               aria-label="Next report page"
               className="rounded-lg border border-white/10 p-2 text-zinc-300 transition hover:bg-white/5 disabled:opacity-30"
@@ -1019,8 +1058,7 @@ export default function AdminAbuseReports({ onRefresh }) {
         actionLoading={actionLoading}
         onClose={() => {
           if (!actionLoading) {
-            setSelectedReport(null);
-            setDetailsLoading(false);
+            closeReportDetails();
           }
         }}
         onReview={openReview}

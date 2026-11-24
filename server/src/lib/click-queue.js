@@ -18,7 +18,7 @@ const QUEUE_OPTIONS = {
 };
 
 function createRedisConnection({ worker = false } = {}) {
-  return new Redis(env.REDIS_URL, {
+  const connection = new Redis(env.REDIS_URL, {
     lazyConnect: true,
     enableReadyCheck: !worker,
     enableOfflineQueue: false,
@@ -29,6 +29,15 @@ function createRedisConnection({ worker = false } = {}) {
       return Math.min(times * 500, 2000);
     },
   });
+
+  connection.on("error", (error) => {
+    console.error(
+      `BullMQ Redis ${worker ? "worker" : "queue"} connection error:`,
+      error.message,
+    );
+  });
+
+  return connection;
 }
 
 function validateClickTimestamp(clickedAt) {
@@ -40,13 +49,11 @@ function validateClickTimestamp(clickedAt) {
   }
 }
 
-const queueRedis = createRedisConnection();
+// BullMQ resources are created only after Redis availability
+// has been confirmed by the server startup process.
+export let clickQueue = null;
 
-export const clickQueue = new Queue(QUEUE_NAME, {
-  connection: queueRedis,
-  defaultJobOptions: QUEUE_OPTIONS,
-});
-
+let queueRedis = null;
 let clickWorker = null;
 let workerRedis = null;
 
@@ -61,6 +68,10 @@ export async function enqueueClick({
 
   validateClickTimestamp(clickedAt);
 
+  if (!clickQueue) {
+    throw new Error("Click queue is unavailable.");
+  }
+
   return clickQueue.add("record-click", {
     shortUrlId,
     referrerOrigin,
@@ -73,60 +84,72 @@ export async function startClickWorker() {
     return clickWorker;
   }
 
+  if (clickQueue) {
+    throw new Error("Click queue initialization is already in progress.");
+  }
+
+  queueRedis = createRedisConnection();
   workerRedis = createRedisConnection({ worker: true });
 
-  clickWorker = new Worker(
-    QUEUE_NAME,
-    async (job) => {
-      if (job.name !== "record-click") {
-        throw new Error(`Unsupported click job: ${job.name}`);
-      }
-
-      const {
-        shortUrlId,
-        referrerOrigin = null,
-        clickedAt,
-      } = job.data;
-
-      // Older queued jobs did not store a click timestamp.
-      // Preserve their previous processing-time behavior.
-      const eventTimestamp =
-        clickedAt === undefined
-          ? new Date()
-          : new Date(clickedAt);
-
-      if (!Number.isFinite(eventTimestamp.getTime())) {
-        throw new TypeError("Click job contains an invalid timestamp.");
-      }
-
-      await recordClick({
-        shortUrlId,
-        referrerOrigin,
-        clickedAt: eventTimestamp,
-      });
-    },
-    {
-      connection: workerRedis,
-      concurrency: 10,
-    },
-  );
-
-  clickWorker.on("completed", (job) => {
-    console.log(`Click event processed: ${job.id}`);
-  });
-
-  clickWorker.on("failed", (job, error) => {
-    console.error(
-      `Click event failed${job ? `: ${job.id}` : ""}:`,
-      error.message,
-    );
-  });
-
-  clickWorker.on("error", (error) => {
-    console.error("Click worker error:", error.message);
-  });
-
   try {
+    clickQueue = new Queue(QUEUE_NAME, {
+      connection: queueRedis,
+      defaultJobOptions: QUEUE_OPTIONS,
+    });
+
+    clickWorker = new Worker(
+      QUEUE_NAME,
+      async (job) => {
+        if (job.name !== "record-click") {
+          throw new Error(`Unsupported click job: ${job.name}`);
+        }
+
+        const {
+          shortUrlId,
+          referrerOrigin = null,
+          clickedAt,
+        } = job.data;
+
+        // Older queued jobs did not store a click timestamp.
+        // Preserve their previous processing-time behavior.
+        const eventTimestamp =
+          clickedAt === undefined
+            ? new Date()
+            : new Date(clickedAt);
+
+        if (!Number.isFinite(eventTimestamp.getTime())) {
+          throw new TypeError(
+            "Click job contains an invalid timestamp.",
+          );
+        }
+
+        await recordClick({
+          shortUrlId,
+          referrerOrigin,
+          clickedAt: eventTimestamp,
+        });
+      },
+      {
+        connection: workerRedis,
+        concurrency: 10,
+      },
+    );
+
+    clickWorker.on("completed", (job) => {
+      console.log(`Click event processed: ${job.id}`);
+    });
+
+    clickWorker.on("failed", (job, error) => {
+      console.error(
+        `Click event failed${job ? `: ${job.id}` : ""}:`,
+        error.message,
+      );
+    });
+
+    clickWorker.on("error", (error) => {
+      console.error("Click worker error:", error.message);
+    });
+
     await clickWorker.waitUntilReady();
 
     console.log("BullMQ click worker is ready.");
@@ -135,11 +158,25 @@ export async function startClickWorker() {
   } catch (error) {
     console.error("Unable to start click worker:", error.message);
 
-    await clickWorker.close().catch(() => {});
-    clickWorker = null;
+    if (clickWorker) {
+      await clickWorker.close().catch(() => {});
+      clickWorker = null;
+    }
 
-    workerRedis.disconnect();
-    workerRedis = null;
+    if (clickQueue) {
+      await clickQueue.close().catch(() => {});
+      clickQueue = null;
+    }
+
+    if (workerRedis) {
+      workerRedis.disconnect();
+      workerRedis = null;
+    }
+
+    if (queueRedis) {
+      queueRedis.disconnect();
+      queueRedis = null;
+    }
 
     throw error;
   }
@@ -147,9 +184,18 @@ export async function startClickWorker() {
 
 export async function closeClickQueue() {
   if (clickWorker) {
-    await clickWorker.close();
+    const worker = clickWorker;
     clickWorker = null;
+
+    await worker.close();
     console.log("BullMQ click worker closed.");
+  }
+
+  if (clickQueue) {
+    const queue = clickQueue;
+    clickQueue = null;
+
+    await queue.close();
   }
 
   if (workerRedis) {
@@ -157,12 +203,14 @@ export async function closeClickQueue() {
     workerRedis = null;
   }
 
-  await clickQueue.close();
+  if (queueRedis) {
+    if (queueRedis.status === "ready") {
+      await queueRedis.quit();
+    } else if (queueRedis.status !== "end") {
+      queueRedis.disconnect();
+    }
 
-  if (queueRedis.status === "ready") {
-    await queueRedis.quit();
-  } else if (queueRedis.status !== "end") {
-    queueRedis.disconnect();
+    queueRedis = null;
   }
 
   console.log("Click queue closed.");

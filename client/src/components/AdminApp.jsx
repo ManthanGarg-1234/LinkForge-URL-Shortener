@@ -1,5 +1,4 @@
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   Activity,
@@ -286,8 +285,7 @@ function SuspendUserModal({
   if (!user) return null;
 
   const trimmedReason = reason.trim();
-  const validReason =
-    trimmedReason.length >= 10 && trimmedReason.length <= 500;
+  const validReason = trimmedReason.length >= 10 && trimmedReason.length <= 500;
 
   return (
     <div
@@ -317,9 +315,7 @@ function SuspendUserModal({
               Suspend account
             </h2>
 
-            <p className="mt-1 break-all text-sm text-zinc-400">
-              {user.email}
-            </p>
+            <p className="mt-1 break-all text-sm text-zinc-400">{user.email}</p>
           </div>
 
           <button
@@ -428,21 +424,37 @@ export default function AdminApp() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const dashboardRequestIdRef = useRef(0);
+  const usersRequestIdRef = useRef(0);
+  const detailsRequestIdRef = useRef(0);
+  const selectedUserIdRef = useRef(null);
+
   const loadDashboard = useCallback(async () => {
+    const requestId = ++dashboardRequestIdRef.current;
+
     setDashboardLoading(true);
 
     try {
       const response = await adminApi.getDashboardOverview();
+
+      if (requestId !== dashboardRequestIdRef.current) return;
+
       setDashboard(response?.data || null);
     } catch (err) {
-      setError(getErrorMessage(err));
+      if (requestId === dashboardRequestIdRef.current) {
+        setError(getErrorMessage(err));
+      }
     } finally {
-      setDashboardLoading(false);
+      if (requestId === dashboardRequestIdRef.current) {
+        setDashboardLoading(false);
+      }
     }
   }, []);
 
   const loadUsers = useCallback(
     async (page = 1) => {
+      const requestId = ++usersRequestIdRef.current;
+
       setUsersLoading(true);
       setError("");
 
@@ -454,6 +466,8 @@ export default function AdminApp() {
           status: statusFilter,
           search: appliedSearch,
         });
+
+        if (requestId !== usersRequestIdRef.current) return;
 
         const data = response?.data || {};
 
@@ -468,23 +482,70 @@ export default function AdminApp() {
           },
         );
       } catch (err) {
-        setError(getErrorMessage(err));
+        if (requestId === usersRequestIdRef.current) {
+          setError(getErrorMessage(err));
+        }
       } finally {
-        setUsersLoading(false);
+        if (requestId === usersRequestIdRef.current) {
+          setUsersLoading(false);
+        }
       }
     },
     [roleFilter, statusFilter, appliedSearch],
   );
 
+  const loadUserDetails = useCallback(async (id) => {
+    const requestId = ++detailsRequestIdRef.current;
+
+    selectedUserIdRef.current = id;
+    setSelectedUser(null);
+    setDetailsLoading(true);
+    setError("");
+
+    try {
+      const response = await adminApi.getUser(id);
+
+      if (requestId !== detailsRequestIdRef.current) return;
+      if (selectedUserIdRef.current !== id) return;
+
+      setSelectedUser(response?.data?.user || null);
+    } catch (err) {
+      if (
+        requestId === detailsRequestIdRef.current &&
+        selectedUserIdRef.current === id
+      ) {
+        setError(getErrorMessage(err));
+      }
+    } finally {
+      if (requestId === detailsRequestIdRef.current) {
+        setDetailsLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     loadDashboard();
+
+    return () => {
+      dashboardRequestIdRef.current += 1;
+    };
   }, [loadDashboard]);
 
   useEffect(() => {
     if (activePage === "users") {
       loadUsers(1);
     }
+
+    return () => {
+      usersRequestIdRef.current += 1;
+    };
   }, [activePage, loadUsers]);
+
+  useEffect(() => {
+    return () => {
+      detailsRequestIdRef.current += 1;
+    };
+  }, []);
 
   function navigate(page) {
     setActivePage(page);
@@ -498,23 +559,27 @@ export default function AdminApp() {
     setAppliedSearch(searchInput.trim());
   }
 
-  async function handleViewUser(id) {
-    setSelectedUser(null);
-    setDetailsLoading(true);
+  function handleViewUser(id) {
+    loadUserDetails(id);
+  }
 
-    try {
-      const response = await adminApi.getUser(id);
-      setSelectedUser(response?.data?.user || null);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setDetailsLoading(false);
-    }
+  function closeUserDetails() {
+    detailsRequestIdRef.current += 1;
+    selectedUserIdRef.current = null;
+    setSelectedUser(null);
+    setDetailsLoading(false);
+  }
+
+  async function refreshSelectedUserIfCurrent(id) {
+    if (selectedUserIdRef.current !== id) return;
+
+    await loadUserDetails(id);
   }
 
   async function handleSuspendUser() {
-    if (!suspensionTarget) return;
+    if (!suspensionTarget || suspending) return;
 
+    const target = suspensionTarget;
     const reason = suspensionReason.trim();
 
     if (reason.length < 10 || reason.length > 500) {
@@ -527,24 +592,18 @@ export default function AdminApp() {
     setSuccess("");
 
     try {
-      await adminApi.suspendUser(suspensionTarget.id, reason);
+      await adminApi.suspendUser(target.id, reason);
 
       setSuccess(
-        `Account ${suspensionTarget.email} has been suspended. All active sessions and refresh tokens were revoked.`,
+        `Account ${target.email} has been suspended. All active sessions and refresh tokens were revoked.`,
       );
 
       setSuspensionTarget(null);
       setSuspensionReason("");
 
-      await Promise.all([
-        loadUsers(pagination.page),
-        loadDashboard(),
-      ]);
+      await Promise.all([loadUsers(pagination.page), loadDashboard()]);
 
-      if (selectedUser?.id === suspensionTarget.id) {
-        const response = await adminApi.getUser(suspensionTarget.id);
-        setSelectedUser(response?.data?.user || null);
-      }
+      await refreshSelectedUserIfCurrent(target.id);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -553,6 +612,8 @@ export default function AdminApp() {
   }
 
   async function handleReactivateUser(target) {
+    if (actioningUserId) return;
+
     const confirmed = window.confirm(
       `Reactivate this account?\n\n${target.email}\n\nThe user will need to sign in again. Previously revoked sessions will not be restored.`,
     );
@@ -570,15 +631,9 @@ export default function AdminApp() {
         `Account ${target.email} has been reactivated. The user must sign in again.`,
       );
 
-      await Promise.all([
-        loadUsers(pagination.page),
-        loadDashboard(),
-      ]);
+      await Promise.all([loadUsers(pagination.page), loadDashboard()]);
 
-      if (selectedUser?.id === target.id) {
-        const response = await adminApi.getUser(target.id);
-        setSelectedUser(response?.data?.user || null);
-      }
+      await refreshSelectedUserIfCurrent(target.id);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -702,9 +757,7 @@ export default function AdminApp() {
               {user?.name || "LinkForge Admin"}
             </p>
 
-            <p className="mt-1 truncate text-xs text-zinc-500">
-              {user?.email}
-            </p>
+            <p className="mt-1 truncate text-xs text-zinc-500">{user?.email}</p>
           </div>
 
           <button
@@ -1214,7 +1267,7 @@ export default function AdminApp() {
                                       onClick={() => handleReactivateUser(item)}
                                       title="Reactivate account"
                                       aria-label={`Reactivate ${item.email}`}
-                                      disabled={actioningUserId === item.id}
+                                      disabled={Boolean(actioningUserId)}
                                       className="rounded-lg border border-emerald-400/15 p-2 text-emerald-300 transition hover:bg-emerald-400/10 disabled:opacity-40"
                                     >
                                       <UserCheck size={16} />
@@ -1237,7 +1290,8 @@ export default function AdminApp() {
 
                 <div className="flex flex-wrap items-center justify-between gap-4 border-t border-white/[0.07] px-5 py-4">
                   <p className="text-xs text-zinc-500">
-                    Showing {users.length} of {formatNumber(pagination.total)} accounts
+                    Showing {users.length} of {formatNumber(pagination.total)}{" "}
+                    accounts
                     <span className="mx-2 text-zinc-700">·</span>
                     Page {pagination.page} of{" "}
                     {Math.max(1, pagination.totalPages)}
@@ -1255,8 +1309,7 @@ export default function AdminApp() {
 
                     <button
                       disabled={
-                        usersLoading ||
-                        pagination.page >= pagination.totalPages
+                        usersLoading || pagination.page >= pagination.totalPages
                       }
                       onClick={() => loadUsers(pagination.page + 1)}
                       aria-label="Next page"
@@ -1279,10 +1332,7 @@ export default function AdminApp() {
       <UserDetailsModal
         user={selectedUser}
         loading={detailsLoading}
-        onClose={() => {
-          setSelectedUser(null);
-          setDetailsLoading(false);
-        }}
+        onClose={closeUserDetails}
       />
 
       <SuspendUserModal

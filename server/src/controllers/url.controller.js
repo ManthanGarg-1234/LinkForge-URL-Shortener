@@ -1,4 +1,3 @@
-
 import { env } from "../config/env.js";
 
 import { enqueueClick } from "../lib/click-queue.js";
@@ -7,12 +6,14 @@ import {
   createShortUrlSchema,
   listShortUrlsSchema,
   shortUrlIdSchema,
+  updateShortUrlSchema,
   updateShortUrlStatusSchema,
 } from "../validators/url.schemas.js";
 
 import {
   createShortUrl,
   getUserShortUrls,
+  updateShortUrl,
   updateShortUrlStatus,
   deleteShortUrl,
   resolveShortCode,
@@ -98,6 +99,54 @@ export async function listUrls(req, res) {
     data: {
       urls: result.items.map(createShortUrlResponse),
       pagination: result.pagination,
+    },
+  });
+}
+
+export async function updateUrl(req, res) {
+  const params = shortUrlIdSchema.safeParse(req.params);
+
+  if (!params.success) {
+    return validationError(res, params.error);
+  }
+
+  const body = updateShortUrlSchema.safeParse(req.body);
+
+  if (!body.success) {
+    return validationError(res, body.error);
+  }
+
+  const updates = {};
+
+  if (Object.hasOwn(body.data, "originalUrl")) {
+    updates.originalUrl = body.data.originalUrl;
+  }
+
+  if (Object.hasOwn(body.data, "expiresAt")) {
+    updates.expiresAt = body.data.expiresAt;
+  }
+
+  const record = await updateShortUrl({
+    userId: req.user.id,
+    id: params.data.id,
+    updates,
+  });
+
+  if (!record) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: "SHORT_URL_NOT_FOUND",
+        message: "This short URL does not exist or is unavailable.",
+      },
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Short URL updated successfully.",
+    data: {
+      url: createShortUrlResponse(record),
     },
   });
 }
@@ -212,10 +261,7 @@ export async function redirectShortUrl(req, res) {
     try {
       await recordClick(clickEvent);
     } catch (databaseError) {
-      console.error(
-        "Click analytics fallback failed:",
-        databaseError.message,
-      );
+      console.error("Click analytics fallback failed:", databaseError.message);
     }
   }
 

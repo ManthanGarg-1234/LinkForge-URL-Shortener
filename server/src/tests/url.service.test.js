@@ -39,6 +39,7 @@ import { generateShortCode } from "../utils/short-code.utils.js";
 import {
   createShortUrl,
   getUserShortUrls,
+  updateShortUrl,
   updateShortUrlStatus,
   deleteShortUrl,
   resolveShortCode,
@@ -187,6 +188,285 @@ describe("URL service", () => {
       });
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("updateShortUrl", () => {
+    const existingRecord = {
+      id: "url-id",
+      shortCode: "Ab12Cd34",
+      originalUrl: "https://example.com",
+      isActive: true,
+      expiresAt: null,
+      createdAt: new Date("2026-11-19T10:00:00.000Z"),
+    };
+
+    it("updates the destination URL and invalidates its cached short URL", async () => {
+      const updatedRecord = {
+        ...existingRecord,
+        originalUrl: "https://updated-example.com",
+      };
+
+      prisma.shortUrl.findFirst
+        .mockResolvedValueOnce({ shortCode: "Ab12Cd34" })
+        .mockResolvedValueOnce(updatedRecord);
+
+      prisma.shortUrl.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await updateShortUrl({
+        userId: "user-id",
+        id: "url-id",
+        updates: {
+          originalUrl: "https://updated-example.com",
+        },
+      });
+
+      expect(result).toEqual(updatedRecord);
+
+      expect(prisma.shortUrl.findFirst).toHaveBeenNthCalledWith(1, {
+        where: {
+          id: "url-id",
+          userId: "user-id",
+        },
+        select: {
+          shortCode: true,
+        },
+      });
+
+      expect(prisma.shortUrl.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "url-id",
+          userId: "user-id",
+        },
+        data: {
+          originalUrl: "https://updated-example.com",
+        },
+      });
+
+      expect(prisma.shortUrl.findFirst).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: {
+            id: "url-id",
+            userId: "user-id",
+          },
+          select: expect.any(Object),
+        }),
+      );
+
+      expect(result.shortCode).toBe("Ab12Cd34");
+
+      expect(redis.del).toHaveBeenCalledWith(
+        "linkforge:short-url:Ab12Cd34",
+      );
+    });
+
+    it("sets an expiration date using a Date value", async () => {
+      const expiration = "2027-12-31T23:59:59.000Z";
+      const updatedRecord = {
+        ...existingRecord,
+        expiresAt: new Date(expiration),
+      };
+
+      prisma.shortUrl.findFirst
+        .mockResolvedValueOnce({ shortCode: "Ab12Cd34" })
+        .mockResolvedValueOnce(updatedRecord);
+
+      prisma.shortUrl.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await updateShortUrl({
+        userId: "user-id",
+        id: "url-id",
+        updates: {
+          expiresAt: expiration,
+        },
+      });
+
+      expect(result).toEqual(updatedRecord);
+
+      expect(prisma.shortUrl.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "url-id",
+          userId: "user-id",
+        },
+        data: {
+          expiresAt: new Date(expiration),
+        },
+      });
+
+      expect(redis.del).toHaveBeenCalledWith(
+        "linkforge:short-url:Ab12Cd34",
+      );
+    });
+
+    it("clears the expiration date when expiresAt is null", async () => {
+      const updatedRecord = {
+        ...existingRecord,
+        expiresAt: null,
+      };
+
+      prisma.shortUrl.findFirst
+        .mockResolvedValueOnce({ shortCode: "Ab12Cd34" })
+        .mockResolvedValueOnce(updatedRecord);
+
+      prisma.shortUrl.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await updateShortUrl({
+        userId: "user-id",
+        id: "url-id",
+        updates: {
+          expiresAt: null,
+        },
+      });
+
+      expect(result.expiresAt).toBeNull();
+
+      expect(prisma.shortUrl.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "url-id",
+          userId: "user-id",
+        },
+        data: {
+          expiresAt: null,
+        },
+      });
+
+      expect(redis.del).toHaveBeenCalledWith(
+        "linkforge:short-url:Ab12Cd34",
+      );
+    });
+
+    it("returns null when the URL does not belong to the user", async () => {
+      prisma.shortUrl.findFirst.mockResolvedValue(null);
+
+      const result = await updateShortUrl({
+        userId: "another-user",
+        id: "url-id",
+        updates: {
+          originalUrl: "https://updated-example.com",
+        },
+      });
+
+      expect(result).toBeNull();
+      expect(prisma.shortUrl.updateMany).not.toHaveBeenCalled();
+      expect(redis.del).not.toHaveBeenCalled();
+    });
+
+    it("returns null when the database update affects no records", async () => {
+      prisma.shortUrl.findFirst.mockResolvedValue({
+        shortCode: "Ab12Cd34",
+      });
+
+      prisma.shortUrl.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await updateShortUrl({
+        userId: "user-id",
+        id: "url-id",
+        updates: {
+          originalUrl: "https://updated-example.com",
+        },
+      });
+
+      expect(result).toBeNull();
+      expect(prisma.shortUrl.findFirst).toHaveBeenCalledTimes(1);
+      expect(redis.del).not.toHaveBeenCalled();
+    });
+
+    it("does not fail the update when Redis invalidation fails", async () => {
+      const updatedRecord = {
+        ...existingRecord,
+        originalUrl: "https://updated-example.com",
+      };
+
+      prisma.shortUrl.findFirst
+        .mockResolvedValueOnce({ shortCode: "Ab12Cd34" })
+        .mockResolvedValueOnce(updatedRecord);
+
+      prisma.shortUrl.updateMany.mockResolvedValue({ count: 1 });
+      redis.del.mockRejectedValue(new Error("Redis unavailable"));
+
+      await expect(
+        updateShortUrl({
+          userId: "user-id",
+          id: "url-id",
+          updates: {
+            originalUrl: "https://updated-example.com",
+          },
+        }),
+      ).resolves.toEqual(updatedRecord);
+    });
+
+    it("rejects an empty update", async () => {
+      await expect(
+        updateShortUrl({
+          userId: "user-id",
+          id: "url-id",
+          updates: {},
+        }),
+      ).rejects.toThrow("At least one editable field is required.");
+
+      expect(prisma.shortUrl.findFirst).not.toHaveBeenCalled();
+      expect(prisma.shortUrl.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid expiration date", async () => {
+      await expect(
+        updateShortUrl({
+          userId: "user-id",
+          id: "url-id",
+          updates: {
+            expiresAt: "not-a-date",
+          },
+        }),
+      ).rejects.toThrow("A valid expiration date is required.");
+
+      expect(prisma.shortUrl.findFirst).not.toHaveBeenCalled();
+      expect(prisma.shortUrl.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects an expiration date in the past", async () => {
+      await expect(
+        updateShortUrl({
+          userId: "user-id",
+          id: "url-id",
+          updates: {
+            expiresAt: "2020-01-01T00:00:00.000Z",
+          },
+        }),
+      ).rejects.toThrow("Expiration date must be in the future.");
+
+      expect(prisma.shortUrl.findFirst).not.toHaveBeenCalled();
+      expect(prisma.shortUrl.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing user ID", async () => {
+      await expect(
+        updateShortUrl({
+          id: "url-id",
+          updates: {
+            originalUrl: "https://updated-example.com",
+          },
+        }),
+      ).rejects.toThrow(
+        "User ID, URL ID, and update data are required.",
+      );
+
+      expect(prisma.shortUrl.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing URL ID", async () => {
+      await expect(
+        updateShortUrl({
+          userId: "user-id",
+          updates: {
+            originalUrl: "https://updated-example.com",
+          },
+        }),
+      ).rejects.toThrow(
+        "User ID, URL ID, and update data are required.",
+      );
+
+      expect(prisma.shortUrl.findFirst).not.toHaveBeenCalled();
     });
   });
 

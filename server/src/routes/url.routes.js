@@ -1,9 +1,9 @@
-
 import { Router } from "express";
 
 import {
   createUrl,
   listUrls,
+  updateUrl,
   updateUrlStatus,
   deleteUrl,
 } from "../controllers/url.controller.js";
@@ -22,12 +22,12 @@ router.post(
   createUrl,
 );
 
-router.get(
-  "/",
-  authenticate,
-  listUrls,
-);
+router.get("/", authenticate, listUrls);
 
+// Update destination URL and/or expiration date.
+router.patch("/:id", requireTrustedOrigin, authenticate, updateUrl);
+
+// Activate or deactivate a short URL.
 router.patch(
   "/:id/status",
   requireTrustedOrigin,
@@ -35,11 +35,6 @@ router.patch(
   updateUrlStatus,
 );
 
-router.delete(
-  "/:id",
-  requireTrustedOrigin,
-  authenticate,
-  deleteUrl,
-);
+router.delete("/:id", requireTrustedOrigin, authenticate, deleteUrl);
 
 export default router;

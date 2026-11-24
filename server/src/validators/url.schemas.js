@@ -1,4 +1,3 @@
-
 import { z } from "zod";
 
 const originalUrlSchema = z
@@ -36,8 +35,7 @@ export const createShortUrlSchema = z
   .strict()
   .refine(
     (data) =>
-      !data.expiresAt ||
-      new Date(data.expiresAt).getTime() > Date.now(),
+      !data.expiresAt || new Date(data.expiresAt).getTime() > Date.now(),
     {
       message: "Expiration date must be in the future.",
       path: ["expiresAt"],
@@ -56,6 +54,29 @@ export const updateShortUrlStatusSchema = z
     isActive: z.boolean(),
   })
   .strict();
+
+export const updateShortUrlSchema = z
+  .object({
+    originalUrl: originalUrlSchema.optional(),
+    expiresAt: z.union([z.iso.datetime({ offset: true }), z.null()]).optional(),
+  })
+  .strict()
+  .refine(
+    (data) => data.originalUrl !== undefined || data.expiresAt !== undefined,
+    {
+      message: "At least one field must be provided for an update.",
+    },
+  )
+  .refine(
+    (data) =>
+      data.expiresAt === undefined ||
+      data.expiresAt === null ||
+      new Date(data.expiresAt).getTime() > Date.now(),
+    {
+      message: "Expiration date must be in the future.",
+      path: ["expiresAt"],
+    },
+  );
 
 export const shortUrlIdSchema = z
   .object({

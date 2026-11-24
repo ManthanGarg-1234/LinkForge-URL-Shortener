@@ -1,3 +1,4 @@
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
@@ -37,6 +38,7 @@ vi.mock("../lib/click-queue.js", () => ({
 vi.mock("../services/url.service.js", () => ({
   createShortUrl: vi.fn(),
   getUserShortUrls: vi.fn(),
+  updateShortUrl: vi.fn(),
   updateShortUrlStatus: vi.fn(),
   deleteShortUrl: vi.fn(),
   resolveShortCode: vi.fn(),
@@ -51,6 +53,7 @@ import { enqueueClick } from "../lib/click-queue.js";
 import {
   createShortUrl,
   getUserShortUrls,
+  updateShortUrl,
   updateShortUrlStatus,
   deleteShortUrl,
   resolveShortCode,
@@ -92,6 +95,7 @@ describe("URL API routes", () => {
       },
     });
 
+    updateShortUrl.mockResolvedValue(validRecord);
     updateShortUrlStatus.mockResolvedValue(validRecord);
     deleteShortUrl.mockResolvedValue(true);
 
@@ -235,6 +239,138 @@ describe("URL API routes", () => {
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe("UNAUTHENTICATED");
       expect(getUserShortUrls).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("PATCH /api/v1/urls/:id", () => {
+    it("updates the original URL of an owned short URL", async () => {
+      const updatedRecord = {
+        ...validRecord,
+        originalUrl: "https://updated-example.com",
+      };
+
+      updateShortUrl.mockResolvedValue(updatedRecord);
+
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({
+        originalUrl: "https://updated-example.com",
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.url.originalUrl).toBe(
+        "https://updated-example.com",
+      );
+      expect(response.body.data.url.shortCode).toBe(validRecord.shortCode);
+
+      expect(updateShortUrl).toHaveBeenCalledWith({
+        userId: "user-123",
+        id: validUrlId,
+        updates: {
+          originalUrl: "https://updated-example.com",
+        },
+      });
+    });
+
+    it("allows clearing the expiration date", async () => {
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({
+        expiresAt: null,
+      });
+
+      expect(response.status).toBe(200);
+
+      expect(updateShortUrl).toHaveBeenCalledWith({
+        userId: "user-123",
+        id: validUrlId,
+        updates: {
+          expiresAt: null,
+        },
+      });
+    });
+
+    it("rejects an empty update", async () => {
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateShortUrl).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid destination URLs", async () => {
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({
+        originalUrl: "javascript:alert(1)",
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateShortUrl).not.toHaveBeenCalled();
+    });
+
+    it("rejects unexpected properties", async () => {
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({
+        originalUrl: "https://example.com",
+        isActive: false,
+        moderationStatus: "APPROVED",
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(updateShortUrl).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the URL does not belong to the user", async () => {
+      updateShortUrl.mockResolvedValue(null);
+
+      const response = await trustedAuthenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      ).send({
+        originalUrl: "https://updated-example.com",
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe("SHORT_URL_NOT_FOUND");
+    });
+
+    it("rejects unauthenticated requests", async () => {
+      const response = await request(app)
+        .patch(`/api/v1/urls/${validUrlId}`)
+        .set("Origin", env.CORS_ORIGIN)
+        .send({
+          originalUrl: "https://updated-example.com",
+        });
+
+      expect(response.status).toBe(401);
+      expect(updateShortUrl).not.toHaveBeenCalled();
+    });
+
+    it("rejects requests from an untrusted origin", async () => {
+      const response = await authenticatedRequest(
+        "patch",
+        `/api/v1/urls/${validUrlId}`,
+      )
+        .set("Origin", "https://attacker.example")
+        .send({
+          originalUrl: "https://updated-example.com",
+        });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+      expect(updateShortUrl).not.toHaveBeenCalled();
     });
   });
 

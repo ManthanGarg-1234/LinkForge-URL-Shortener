@@ -45,3 +45,13 @@ export const verifyEmailSchema = z
       .max(200, "Invalid verification token."),
   })
   .strict();
+
+export const updateProfileSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(2, "Name must contain at least 2 characters.")
+      .max(100, "Name must not exceed 100 characters."),
+  })
+  .strict();

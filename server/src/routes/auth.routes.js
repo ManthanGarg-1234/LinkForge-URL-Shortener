@@ -8,13 +8,12 @@ import {
   refresh,
   logout,
   getCurrentUser,
+  updateCurrentUser,
 } from "../controllers/auth.controller.js";
 
 import { authenticate } from "../middleware/auth.middleware.js";
 
-import {
-  requireTrustedOrigin,
-} from "../middleware/trusted-origin.middleware.js";
+import { requireTrustedOrigin } from "../middleware/trusted-origin.middleware.js";
 
 import {
   registerRateLimiter,
@@ -27,12 +26,7 @@ import {
 const router = Router();
 
 // Public authentication endpoints.
-router.post(
-  "/register",
-  requireTrustedOrigin,
-  registerRateLimiter,
-  register,
-);
+router.post("/register", requireTrustedOrigin, registerRateLimiter, register);
 
 router.post(
   "/verify-email",
@@ -41,12 +35,7 @@ router.post(
   verifyEmail,
 );
 
-router.post(
-  "/login",
-  requireTrustedOrigin,
-  loginRateLimiter,
-  login,
-);
+router.post("/login", requireTrustedOrigin, loginRateLimiter, login);
 
 router.post(
   "/google",
@@ -55,21 +44,13 @@ router.post(
   googleLogin,
 );
 
-router.post(
-  "/refresh",
-  requireTrustedOrigin,
-  refreshRateLimiter,
-  refresh,
-);
+router.post("/refresh", requireTrustedOrigin, refreshRateLimiter, refresh);
 
 // Authenticated endpoints.
-router.post(
-  "/logout",
-  requireTrustedOrigin,
-  authenticate,
-  logout,
-);
+router.post("/logout", requireTrustedOrigin, authenticate, logout);
 
 router.get("/me", authenticate, getCurrentUser);
+
+router.patch("/me", requireTrustedOrigin, authenticate, updateCurrentUser);
 
 export default router;

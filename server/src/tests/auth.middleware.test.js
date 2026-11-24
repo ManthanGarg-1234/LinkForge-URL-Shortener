@@ -1,4 +1,3 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock, verifyAccessTokenMock } = vi.hoisted(() => ({
@@ -24,10 +23,10 @@ vi.mock("../utils/token.utils.js", async (importOriginal) => {
 });
 
 import { authenticate } from "../middleware/auth.middleware.js";
+import { ACCESS_TOKEN_COOKIE } from "../config/auth.js";
 
-import {
-  ACCESS_TOKEN_COOKIE,
-} from "../config/auth.js";
+const createdAt = new Date("2026-01-01T00:00:00.000Z");
+const emailVerifiedAt = new Date("2026-01-02T00:00:00.000Z");
 
 const claims = {
   userId: "user-123",
@@ -43,7 +42,8 @@ const activeSession = {
     name: "Test User",
     role: "USER",
     status: "ACTIVE",
-    emailVerifiedAt: new Date(),
+    emailVerifiedAt,
+    createdAt,
   },
 };
 
@@ -81,7 +81,7 @@ describe("Authentication middleware", () => {
     });
   });
 
-  it("should authenticate a valid user and attach req.user", async () => {
+  it("should authenticate a valid user and attach safe account metadata", async () => {
     const req = createRequest();
     const res = createResponse();
     const next = vi.fn();
@@ -93,6 +93,9 @@ describe("Authentication middleware", () => {
       email: "user@example.com",
       name: "Test User",
       role: "USER",
+      status: "ACTIVE",
+      emailVerifiedAt,
+      createdAt,
       sessionId: "session-123",
     });
 
@@ -113,9 +116,7 @@ describe("Authentication middleware", () => {
   });
 
   it("should reject an invalid or expired JWT", async () => {
-    verifyAccessTokenMock.mockRejectedValue(
-      new Error("Invalid JWT")
-    );
+    verifyAccessTokenMock.mockRejectedValue(new Error("Invalid JWT"));
 
     const req = createRequest();
     const res = createResponse();
@@ -141,7 +142,7 @@ describe("Authentication middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("should query only an active, unexpired matching session", async () => {
+  it("should query only an active, unexpired matching session and select profile metadata", async () => {
     const req = createRequest();
     const res = createResponse();
     const next = vi.fn();
@@ -168,6 +169,7 @@ describe("Authentication middleware", () => {
             role: true,
             status: true,
             emailVerifiedAt: true,
+            createdAt: true,
           },
         },
       },

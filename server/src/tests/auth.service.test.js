@@ -1,9 +1,11 @@
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock, hashPasswordMock } = vi.hoisted(() => ({
   prismaMock: {
     $transaction: vi.fn(),
+    user: {
+      update: vi.fn(),
+    },
   },
   hashPasswordMock: vi.fn(),
 }));
@@ -21,7 +23,7 @@ vi.mock("../utils/password.utils.js", async (importOriginal) => {
   };
 });
 
-import { registerUser } from "../services/auth.service.js";
+import { registerUser, updateUserProfile } from "../services/auth.service.js";
 
 const validInput = {
   name: "LinkForge User",
@@ -80,7 +82,7 @@ describe("Authentication service - registration", () => {
         data: expect.objectContaining({
           email: "user@example.com",
         }),
-      })
+      }),
     );
   });
 
@@ -94,7 +96,7 @@ describe("Authentication service - registration", () => {
         data: expect.objectContaining({
           passwordHash: "$argon2id$test-hash",
         }),
-      })
+      }),
     );
   });
 
@@ -128,7 +130,7 @@ describe("Authentication service - registration", () => {
       registerUser({
         ...validInput,
         password: "short",
-      })
+      }),
     ).rejects.toThrow();
 
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
@@ -137,7 +139,7 @@ describe("Authentication service - registration", () => {
   it("should return a generic result for an existing email", async () => {
     const duplicateError = Object.assign(
       new Error("Unique constraint failed"),
-      { code: "P2002" }
+      { code: "P2002" },
     );
 
     prismaMock.$transaction.mockRejectedValueOnce(duplicateError);
@@ -153,11 +155,121 @@ describe("Authentication service - registration", () => {
 
   it("should propagate unexpected database errors", async () => {
     prismaMock.$transaction.mockRejectedValueOnce(
-      new Error("Database unavailable")
+      new Error("Database unavailable"),
     );
 
     await expect(registerUser(validInput)).rejects.toThrow(
-      "Database unavailable"
+      "Database unavailable",
     );
+  });
+});
+
+describe("Authentication service - profile update", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    prismaMock.user.update.mockResolvedValue({
+      ...createdUser,
+      name: "Updated User",
+    });
+  });
+
+  it("should update the authenticated user's display name", async () => {
+    const result = await updateUserProfile({
+      userId: "user-123",
+      input: {
+        name: "Updated User",
+      },
+    });
+
+    expect(result.name).toBe("Updated User");
+
+    expect(prismaMock.user.update).toHaveBeenCalledWith({
+      where: {
+        id: "user-123",
+      },
+      data: {
+        name: "Updated User",
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+      },
+    });
+  });
+
+  it("should trim whitespace from the display name", async () => {
+    await updateUserProfile({
+      userId: "user-123",
+      input: {
+        name: "  Updated User  ",
+      },
+    });
+
+    expect(prismaMock.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          name: "Updated User",
+        },
+      }),
+    );
+  });
+
+  it("should reject a display name shorter than two characters", async () => {
+    await expect(
+      updateUserProfile({
+        userId: "user-123",
+        input: {
+          name: "A",
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("should reject an empty profile update", async () => {
+    await expect(
+      updateUserProfile({
+        userId: "user-123",
+        input: {},
+      }),
+    ).rejects.toThrow();
+
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("should reject attempts to update protected account fields", async () => {
+    await expect(
+      updateUserProfile({
+        userId: "user-123",
+        input: {
+          name: "Updated User",
+          role: "ADMIN",
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("should propagate database errors during profile updates", async () => {
+    prismaMock.user.update.mockRejectedValueOnce(
+      new Error("Database unavailable"),
+    );
+
+    await expect(
+      updateUserProfile({
+        userId: "user-123",
+        input: {
+          name: "Updated User",
+        },
+      }),
+    ).rejects.toThrow("Database unavailable");
   });
 });

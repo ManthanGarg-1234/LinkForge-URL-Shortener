@@ -1,4 +1,3 @@
-
 import {
   lazy,
   Suspense,
@@ -19,20 +18,27 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Flag,
   LayoutDashboard,
   Link2,
   LogOut,
   Menu,
   PauseCircle,
+  Pencil,
   PlayCircle,
   Plus,
   QrCode,
   Search,
+  Share2,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 
 import { useAuth } from "../context/AuthContext.jsx";
+import ReportAbuseModal from "./ReportAbuseModal.jsx";
+import EditShortUrlModal from "./EditShortUrlModal.jsx";
+import AccountSettingsPage from "./AccountSettingsPage.jsx";
 import { urlApi } from "../services/api.js";
 
 const AnalyticsPage = lazy(() => import("./AnalyticsPage.jsx"));
@@ -68,6 +74,11 @@ function formatDate(value) {
   });
 }
 
+function toLocalDateTimeInputValue(date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
 export default function AuthenticatedApp() {
   const { user, logout } = useAuth();
 
@@ -96,6 +107,8 @@ export default function AuthenticatedApp() {
   const [actioningId, setActioningId] = useState("");
 
   const [qrPreview, setQrPreview] = useState(null);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const loadLinks = useCallback(async (page = 1) => {
     setLoading(true);
@@ -159,8 +172,36 @@ export default function AuthenticatedApp() {
     setError("");
     setSuccess("");
 
-    if (!originalUrl.trim()) {
+    const destination = originalUrl.trim();
+
+    if (!destination) {
       setError("Enter a destination URL.");
+      return;
+    }
+
+    let parsedUrl;
+
+    try {
+      parsedUrl = new URL(destination);
+    } catch {
+      setError("Enter a valid destination URL.");
+      return;
+    }
+
+    if (
+      !["http:", "https:"].includes(parsedUrl.protocol) ||
+      !parsedUrl.hostname ||
+      parsedUrl.username ||
+      parsedUrl.password
+    ) {
+      setError(
+        "Only valid HTTP and HTTPS URLs without embedded credentials are allowed.",
+      );
+      return;
+    }
+
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      setError("Expiration date must be in the future.");
       return;
     }
 
@@ -168,7 +209,7 @@ export default function AuthenticatedApp() {
 
     try {
       const payload = {
-        originalUrl: originalUrl.trim(),
+        originalUrl: destination,
       };
 
       if (expiresAt) {
@@ -199,12 +240,47 @@ export default function AuthenticatedApp() {
       setCopiedCode(item.shortCode);
 
       window.setTimeout(() => {
-        setCopiedCode((current) =>
-          current === item.shortCode ? "" : current,
-        );
+        setCopiedCode((current) => (current === item.shortCode ? "" : current));
       }, 1800);
     } catch {
       setError("Unable to copy. Check your browser clipboard permissions.");
+    }
+  }
+
+  async function handleShare(item) {
+    const shortUrl = getShortUrl(item);
+
+    setError("");
+    setSuccess("");
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "LinkForge short link",
+          url: shortUrl,
+        });
+
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shortUrl);
+
+      setCopiedCode(item.shortCode);
+      setSuccess("Native sharing is unavailable. Short link copied instead.");
+
+      window.setTimeout(() => {
+        setCopiedCode((current) => (current === item.shortCode ? "" : current));
+      }, 1800);
+    } catch {
+      setError(
+        "Unable to share or copy this link. Check your browser permissions.",
+      );
     }
   }
 
@@ -260,9 +336,7 @@ export default function AuthenticatedApp() {
 
       setLinks((currentLinks) =>
         currentLinks.map((link) =>
-          link.id === item.id
-            ? { ...link, isActive: nextStatus }
-            : link,
+          link.id === item.id ? { ...link, isActive: nextStatus } : link,
         ),
       );
 
@@ -298,12 +372,48 @@ export default function AuthenticatedApp() {
         setQrPreview(null);
       }
 
+      if (reportTarget?.id === item.id) {
+        setReportTarget(null);
+      }
+
+      if (editTarget?.id === item.id) {
+        setEditTarget(null);
+      }
+
       await loadLinks(pagination.page);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setActioningId("");
     }
+  }
+
+  function handleReportLink(item) {
+    setError("");
+    setSuccess("");
+    setReportTarget(item);
+  }
+
+  function handleCloseReport() {
+    setReportTarget(null);
+  }
+
+  function handleEditLink(item) {
+    setError("");
+    setSuccess("");
+    setEditTarget(item);
+  }
+
+  function handleCloseEdit() {
+    setEditTarget(null);
+  }
+
+  async function handleEditUpdated() {
+    setEditTarget(null);
+    setError("");
+    setSuccess("Short URL updated successfully.");
+
+    await loadLinks(pagination.page);
   }
 
   async function handleLogout() {
@@ -347,6 +457,11 @@ export default function AuthenticatedApp() {
       label: "Analytics",
       icon: BarChart3,
     },
+    {
+      id: "settings",
+      label: "Account Settings",
+      icon: UserRound,
+    },
   ];
 
   const pageTitles = {
@@ -354,6 +469,7 @@ export default function AuthenticatedApp() {
     create: "Create a short link",
     links: "My links",
     analytics: "Analytics",
+    settings: "Account Settings",
   };
 
   const qrItemExpired =
@@ -409,6 +525,7 @@ export default function AuthenticatedApp() {
                 <button
                   key={item.id}
                   onClick={() => navigate(item.id)}
+                  aria-current={selected ? "page" : undefined}
                   className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
                     selected
                       ? "border border-blue-400/15 bg-blue-500/10 text-blue-300"
@@ -431,9 +548,7 @@ export default function AuthenticatedApp() {
               {user?.name || "LinkForge User"}
             </p>
 
-            <p className="mt-1 truncate text-xs text-zinc-500">
-              {user?.email}
-            </p>
+            <p className="mt-1 truncate text-xs text-zinc-500">{user?.email}</p>
           </div>
 
           <button
@@ -476,9 +591,7 @@ export default function AuthenticatedApp() {
             </span>
 
             <div className="flex h-10 w-10 items-center justify-center rounded-full border border-blue-400/20 bg-blue-500/10 text-sm font-bold text-blue-300">
-              {(user?.name || user?.email || "U")
-                .charAt(0)
-                .toUpperCase()}
+              {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
             </div>
           </div>
         </header>
@@ -522,9 +635,7 @@ export default function AuthenticatedApp() {
               <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-400">
-                      Total links
-                    </span>
+                    <span className="text-sm text-zinc-400">Total links</span>
 
                     <div className="rounded-xl bg-blue-500/10 p-3 text-blue-400">
                       <Link2 size={20} />
@@ -562,9 +673,7 @@ export default function AuthenticatedApp() {
 
                 <div className="rounded-2xl border border-white/[0.07] bg-[#101725] p-6">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-400">
-                      Account role
-                    </span>
+                    <span className="text-sm text-zinc-400">Account role</span>
 
                     <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-400">
                       <Check size={20} />
@@ -587,13 +696,11 @@ export default function AuthenticatedApp() {
                     LINK MANAGEMENT
                   </div>
 
-                  <h2 className="text-2xl font-bold">
-                    Make every link count.
-                  </h2>
+                  <h2 className="text-2xl font-bold">Make every link count.</h2>
 
                   <p className="mt-3 text-sm leading-6 text-zinc-400">
-                    Turn long URLs into compact links that are easier to
-                    share and manage.
+                    Turn long URLs into compact links that are easier to share
+                    and manage.
                   </p>
 
                   <button
@@ -622,9 +729,12 @@ export default function AuthenticatedApp() {
                   links={links.slice(0, 5)}
                   loading={loading}
                   onCopy={handleCopy}
+                  onShare={handleShare}
                   onShowQr={handleShowQr}
+                  onEdit={handleEditLink}
                   onToggleStatus={handleToggleStatus}
                   onDelete={handleDeleteLink}
+                  onReport={handleReportLink}
                   copiedCode={copiedCode}
                   actioningId={actioningId}
                 />
@@ -639,9 +749,7 @@ export default function AuthenticatedApp() {
                   LINK CREATION
                 </p>
 
-                <h1 className="mt-3 text-3xl font-bold">
-                  Create a short link
-                </h1>
+                <h1 className="mt-3 text-3xl font-bold">Create a short link</h1>
 
                 <p className="mt-3 text-sm text-zinc-400">
                   Enter a destination URL and optionally set an expiration.
@@ -675,17 +783,15 @@ export default function AuthenticatedApp() {
                 <label className="mt-7 block">
                   <span className="text-sm font-medium text-zinc-300">
                     Expiration date
-                    <span className="ml-2 text-xs text-zinc-600">
-                      Optional
-                    </span>
+                    <span className="ml-2 text-xs text-zinc-600">Optional</span>
                   </span>
 
                   <input
                     type="datetime-local"
                     value={expiresAt}
-                    min={new Date(Date.now() + 60000)
-                      .toISOString()
-                      .slice(0, 16)}
+                    min={toLocalDateTimeInputValue(
+                      new Date(Date.now() + 60000),
+                    )}
                     onChange={(event) => setExpiresAt(event.target.value)}
                     className="mt-3 w-full rounded-xl border border-white/10 bg-[#090e19] px-4 py-4 text-sm text-white outline-none focus:border-blue-400/60"
                   />
@@ -753,17 +859,19 @@ export default function AuthenticatedApp() {
                 links={filteredLinks}
                 loading={loading}
                 onCopy={handleCopy}
+                onShare={handleShare}
                 onShowQr={handleShowQr}
+                onEdit={handleEditLink}
                 onToggleStatus={handleToggleStatus}
                 onDelete={handleDeleteLink}
+                onReport={handleReportLink}
                 copiedCode={copiedCode}
                 actioningId={actioningId}
               />
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
                 <p className="text-xs text-zinc-500">
-                  Page {pagination.page} of{" "}
-                  {Math.max(1, pagination.totalPages)}
+                  Page {pagination.page} of {Math.max(1, pagination.totalPages)}
                 </p>
 
                 <div className="flex gap-2">
@@ -802,6 +910,8 @@ export default function AuthenticatedApp() {
               <AnalyticsPage />
             </Suspense>
           )}
+
+          {activePage === "settings" && <AccountSettingsPage />}
         </div>
       </main>
 
@@ -846,9 +956,7 @@ export default function AuthenticatedApp() {
 
             <div className="mt-6 flex min-h-64 items-center justify-center rounded-2xl border border-white/10 bg-white p-5">
               {qrPreview.loading && (
-                <p className="text-sm text-zinc-500">
-                  Generating QR code...
-                </p>
+                <p className="text-sm text-zinc-500">Generating QR code...</p>
               )}
 
               {!qrPreview.loading && qrPreview.error && (
@@ -880,9 +988,7 @@ export default function AuthenticatedApp() {
               <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-xs leading-5 text-amber-200">
                 {qrPreview.item.isActive === false &&
                   "This short link is inactive. Activate it before sharing its QR code."}
-                {qrPreview.item.isActive === false &&
-                  qrItemExpired &&
-                  " "}
+                {qrPreview.item.isActive === false && qrItemExpired && " "}
                 {qrItemExpired &&
                   "This short link has expired. Its QR code will not provide a working redirect."}
               </div>
@@ -901,9 +1007,7 @@ export default function AuthenticatedApp() {
                 download={`linkforge-${qrPreview.item.shortCode}.png`}
                 aria-disabled={!qrPreview.dataUrl}
                 className={`flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-400 ${
-                  !qrPreview.dataUrl
-                    ? "pointer-events-none opacity-40"
-                    : ""
+                  !qrPreview.dataUrl ? "pointer-events-none opacity-40" : ""
                 }`}
               >
                 <Download size={17} />
@@ -913,6 +1017,18 @@ export default function AuthenticatedApp() {
           </section>
         </div>
       )}
+
+      {reportTarget && (
+        <ReportAbuseModal item={reportTarget} onClose={handleCloseReport} />
+      )}
+
+      {editTarget && (
+        <EditShortUrlModal
+          item={editTarget}
+          onClose={handleCloseEdit}
+          onUpdated={handleEditUpdated}
+        />
+      )}
     </div>
   );
 }
@@ -921,9 +1037,12 @@ function LinkTable({
   links,
   loading,
   onCopy,
+  onShare,
   onShowQr,
+  onEdit,
   onToggleStatus,
   onDelete,
+  onReport,
   copiedCode,
   actioningId,
 }) {
@@ -1013,6 +1132,17 @@ function LinkTable({
                   {copiedCode === item.shortCode ? "Copied" : "Copy"}
                 </button>
 
+                <button
+                  onClick={() => onShare(item)}
+                  disabled={isBusy}
+                  title="Share short link"
+                  aria-label={`Share short link ${item.shortCode}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/20 px-3 py-2 text-xs font-medium text-cyan-300 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Share2 size={15} />
+                  Share
+                </button>
+
                 <a
                   href={shortUrl}
                   target="_blank"
@@ -1035,12 +1165,21 @@ function LinkTable({
                 </button>
 
                 <button
+                  onClick={() => onEdit(item)}
+                  disabled={isBusy}
+                  title="Edit URL"
+                  aria-label={`Edit short link ${item.shortCode}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-violet-400/20 px-3 py-2 text-xs font-medium text-violet-300 transition hover:bg-violet-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Pencil size={15} />
+                  Edit
+                </button>
+
+                <button
                   onClick={() => onToggleStatus(item)}
                   disabled={isBusy}
                   title={item.isActive ? "Deactivate URL" : "Activate URL"}
-                  aria-label={
-                    item.isActive ? "Deactivate URL" : "Activate URL"
-                  }
+                  aria-label={item.isActive ? "Deactivate URL" : "Activate URL"}
                   className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     item.isActive
                       ? "border-amber-400/20 text-amber-300 hover:bg-amber-400/10"
@@ -1069,6 +1208,17 @@ function LinkTable({
                 >
                   <Trash2 size={15} />
                   Delete
+                </button>
+
+                <button
+                  onClick={() => onReport(item)}
+                  disabled={isBusy}
+                  title="Report abusive short link"
+                  aria-label={`Report short link ${item.shortCode}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-orange-400/20 px-3 py-2 text-xs font-medium text-orange-300 transition hover:bg-orange-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Flag size={15} />
+                  Report
                 </button>
               </div>
             </div>

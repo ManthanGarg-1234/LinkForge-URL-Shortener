@@ -1,11 +1,4 @@
-
-import {
-  afterEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function loadAuthApi() {
   vi.resetModules();
@@ -30,9 +23,7 @@ describe("authApi.restoreSession", () => {
   });
 
   it("shares one in-flight restoration between concurrent calls", async () => {
-    const lockRequest = vi.fn(
-      async (_name, _options, callback) => callback(),
-    );
+    const lockRequest = vi.fn(async (_name, _options, callback) => callback());
 
     vi.stubGlobal("navigator", {
       locks: {
@@ -40,7 +31,8 @@ describe("authApi.restoreSession", () => {
       },
     });
 
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(
         jsonResponse(401, {
           message: "Unauthenticated",
@@ -89,9 +81,7 @@ describe("authApi.restoreSession", () => {
   });
 
   it("does not rotate a refresh token when the access session is valid", async () => {
-    const lockRequest = vi.fn(
-      async (_name, _options, callback) => callback(),
-    );
+    const lockRequest = vi.fn(async (_name, _options, callback) => callback());
 
     vi.stubGlobal("navigator", {
       locks: {
@@ -123,9 +113,7 @@ describe("authApi.restoreSession", () => {
   });
 
   it("does not attempt refresh for non-401 errors", async () => {
-    const lockRequest = vi.fn(
-      async (_name, _options, callback) => callback(),
-    );
+    const lockRequest = vi.fn(async (_name, _options, callback) => callback());
 
     vi.stubGlobal("navigator", {
       locks: {
@@ -154,7 +142,8 @@ describe("authApi.restoreSession", () => {
   it("uses same-tab deduplication when Web Locks are unavailable", async () => {
     vi.stubGlobal("navigator", {});
 
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(
         jsonResponse(401, {
           message: "Unauthenticated",
@@ -190,5 +179,79 @@ describe("authApi.restoreSession", () => {
 
     expect(result.data.user.id).toBe("user-3");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("authApi.updateProfile", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("sends a PATCH request to the authenticated profile endpoint", async () => {
+    const updatedUser = {
+      id: "user-10",
+      name: "Updated User",
+      email: "user@linkforge.test",
+      role: "USER",
+      status: "ACTIVE",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(200, {
+        success: true,
+        message: "Profile updated successfully.",
+        data: {
+          user: updatedUser,
+        },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const authApi = await loadAuthApi();
+
+    const result = await authApi.updateProfile({
+      name: "Updated User",
+    });
+
+    expect(result.data.user).toEqual(updatedUser);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url, options] = fetchMock.mock.calls[0];
+
+    expect(url).toContain("/auth/me");
+    expect(options.method).toBe("PATCH");
+    expect(options.credentials).toBe("include");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(options.body)).toEqual({
+      name: "Updated User",
+    });
+  });
+
+  it("propagates profile validation errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(400, {
+        success: false,
+        message: "Validation failed.",
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Validation failed.",
+        },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const authApi = await loadAuthApi();
+
+    await expect(
+      authApi.updateProfile({
+        name: "A",
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+    });
   });
 });

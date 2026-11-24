@@ -1,5 +1,12 @@
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const mocks = vi.hoisted(() => {
   const state = {
@@ -13,6 +20,7 @@ const mocks = vi.hoisted(() => {
     this.url = url;
     this.options = options;
     this.status = "ready";
+    this.on = vi.fn().mockReturnThis();
     this.disconnect = vi.fn();
     this.quit = vi.fn().mockResolvedValue("OK");
 
@@ -72,21 +80,52 @@ describe("BullMQ click queue", () => {
   const clickedAt = new Date("2026-11-19T10:00:00.000Z");
 
   beforeEach(() => {
+    mocks.redisInstances.length = 0;
+    mocks.queueInstance = null;
+    mocks.workerInstance = null;
+
+    mocks.RedisMock.mockClear();
+    mocks.QueueMock.mockClear();
+    mocks.WorkerMock.mockClear();
+
     mocks.recordClick.mockReset();
     mocks.recordClick.mockResolvedValue({
       id: "click-123",
       shortUrlId: "url-123",
     });
-
-    mocks.queueInstance.add.mockClear();
-    mocks.queueInstance.close.mockClear();
   });
 
-  it("creates the click queue with the expected name", () => {
+  afterEach(async () => {
+    await closeClickQueue();
+  });
+
+  it("does not initialize Redis or BullMQ during module import", () => {
+    expect(clickQueue).toBeNull();
+    expect(mocks.RedisMock).not.toHaveBeenCalled();
+    expect(mocks.QueueMock).not.toHaveBeenCalled();
+    expect(mocks.WorkerMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects enqueueing when the queue is unavailable", async () => {
+    await expect(
+      enqueueClick({
+        shortUrlId: "url-123",
+        clickedAt,
+      }),
+    ).rejects.toThrow("Click queue is unavailable.");
+
+    expect(mocks.QueueMock).not.toHaveBeenCalled();
+  });
+
+  it("creates the click queue with the expected name", async () => {
+    await startClickWorker();
+
     expect(clickQueue.name).toBe("linkforge-click-events");
   });
 
-  it("configures five attempts with exponential backoff", () => {
+  it("configures five attempts with exponential backoff", async () => {
+    await startClickWorker();
+
     expect(clickQueue.options.defaultJobOptions).toMatchObject({
       attempts: 5,
       backoff: {
@@ -99,13 +138,13 @@ describe("BullMQ click queue", () => {
   });
 
   it("enqueues a click event with an ISO timestamp", async () => {
-    const event = {
+    await startClickWorker();
+
+    await enqueueClick({
       shortUrlId: "url-123",
       referrerOrigin: "https://google.com",
       clickedAt,
-    };
-
-    await enqueueClick(event);
+    });
 
     expect(clickQueue.add).toHaveBeenCalledWith("record-click", {
       shortUrlId: "url-123",
@@ -115,6 +154,8 @@ describe("BullMQ click queue", () => {
   });
 
   it("enqueues a click event with a null referrer by default", async () => {
+    await startClickWorker();
+
     await enqueueClick({
       shortUrlId: "url-123",
       clickedAt,
@@ -128,6 +169,8 @@ describe("BullMQ click queue", () => {
   });
 
   it("rejects an event without a short URL ID", async () => {
+    await startClickWorker();
+
     await expect(
       enqueueClick({
         clickedAt,
@@ -138,6 +181,8 @@ describe("BullMQ click queue", () => {
   });
 
   it("rejects an event without a click timestamp", async () => {
+    await startClickWorker();
+
     await expect(
       enqueueClick({
         shortUrlId: "url-123",
@@ -148,6 +193,8 @@ describe("BullMQ click queue", () => {
   });
 
   it("rejects an invalid click timestamp", async () => {
+    await startClickWorker();
+
     await expect(
       enqueueClick({
         shortUrlId: "url-123",
@@ -296,15 +343,24 @@ describe("BullMQ click queue", () => {
 
   it("closes the worker, queue, and Redis connections", async () => {
     const worker = await startClickWorker();
+    const queue = clickQueue;
 
-    const workerConnection = mocks.redisInstances.at(-1);
+    const workerConnection = mocks.redisInstances[1];
     const queueConnection = mocks.redisInstances[0];
 
     await closeClickQueue();
 
     expect(worker.close).toHaveBeenCalledOnce();
+    expect(queue.close).toHaveBeenCalledOnce();
     expect(workerConnection.disconnect).toHaveBeenCalledOnce();
-    expect(clickQueue.close).toHaveBeenCalledOnce();
     expect(queueConnection.quit).toHaveBeenCalledOnce();
+    expect(clickQueue).toBeNull();
+  });
+
+  it("can safely close when BullMQ was never initialized", async () => {
+    await expect(closeClickQueue()).resolves.toBeUndefined();
+
+    expect(mocks.QueueMock).not.toHaveBeenCalled();
+    expect(mocks.WorkerMock).not.toHaveBeenCalled();
   });
 });

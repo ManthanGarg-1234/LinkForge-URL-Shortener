@@ -1,30 +1,23 @@
-
 import {
   registerSchema,
   loginSchema,
   verifyEmailSchema,
+  updateProfileSchema,
 } from "../validators/auth.schemas.js";
 
-import {
-  firebaseGoogleLoginSchema,
-} from "../validators/firebase-auth.schemas.js";
+import { firebaseGoogleLoginSchema } from "../validators/firebase-auth.schemas.js";
 
 import {
   registerUser,
   loginUser,
+  updateUserProfile,
 } from "../services/auth.service.js";
 
-import {
-  authenticateFirebaseGoogleUser,
-} from "../services/firebase-auth.service.js";
+import { authenticateFirebaseGoogleUser } from "../services/firebase-auth.service.js";
 
-import {
-  verifyEmailAddress,
-} from "../services/email-verification.service.js";
+import { verifyEmailAddress } from "../services/email-verification.service.js";
 
-import {
-  sendVerificationEmail,
-} from "../services/email-delivery.service.js";
+import { sendVerificationEmail } from "../services/email-delivery.service.js";
 
 import {
   rotateRefreshToken,
@@ -36,9 +29,7 @@ import {
   isFirebaseConfigured,
 } from "../config/firebase-admin.js";
 
-import {
-  REFRESH_TOKEN_COOKIE,
-} from "../config/auth.js";
+import { REFRESH_TOKEN_COOKIE } from "../config/auth.js";
 
 import {
   setAuthCookies,
@@ -175,10 +166,7 @@ export async function googleLogin(req, res) {
   try {
     const firebaseAuth = await getFirebaseAuth();
 
-    decodedToken = await firebaseAuth.verifyIdToken(
-      parsed.data.idToken,
-      true,
-    );
+    decodedToken = await firebaseAuth.verifyIdToken(parsed.data.idToken, true);
   } catch (error) {
     const invalidTokenCodes = new Set([
       "auth/argument-error",
@@ -202,13 +190,10 @@ export async function googleLogin(req, res) {
     throw error;
   }
 
-  const result = await authenticateFirebaseGoogleUser(
-    decodedToken,
-    {
-      userAgent: req.get("user-agent"),
-      ipAddress: req.ip,
-    },
-  );
+  const result = await authenticateFirebaseGoogleUser(decodedToken, {
+    userAgent: req.get("user-agent"),
+    ipAddress: req.ip,
+  });
 
   if (!result.authenticated) {
     if (result.reason === "ACCOUNT_LINK_REQUIRED") {
@@ -318,7 +303,31 @@ export async function getCurrentUser(req, res) {
         email: req.user.email,
         name: req.user.name,
         role: req.user.role,
+        status: req.user.status,
+        emailVerifiedAt: req.user.emailVerifiedAt,
+        createdAt: req.user.createdAt,
       },
+    },
+  });
+}
+
+export async function updateCurrentUser(req, res) {
+  const parsed = updateProfileSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return validationError(res, parsed.error);
+  }
+
+  const user = await updateUserProfile({
+    userId: req.user.id,
+    input: parsed.data,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Profile updated successfully.",
+    data: {
+      user,
     },
   });
 }

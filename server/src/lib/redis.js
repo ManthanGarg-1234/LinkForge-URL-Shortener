@@ -1,4 +1,3 @@
-
 import Redis from "ioredis";
 
 import { env } from "../config/env.js";
@@ -12,7 +11,15 @@ export const redis = new Redis(env.REDIS_URL, {
   commandTimeout: 2000,
 
   retryStrategy(times) {
-    return Math.min(times * 500, 5000);
+    if (times > 3) {
+      console.warn(
+        "Redis connection retries exhausted. Continuing without Redis.",
+      );
+
+      return null;
+    }
+
+    return Math.min(times * 500, 1500);
   },
 });
 
@@ -77,10 +84,7 @@ export async function disconnectRedis() {
       redis.disconnect();
     }
   } catch (error) {
-    console.error(
-      "Error while disconnecting Redis:",
-      error.message,
-    );
+    console.error("Error while disconnecting Redis:", error.message);
 
     redis.disconnect();
   }

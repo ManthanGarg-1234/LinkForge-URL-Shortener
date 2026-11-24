@@ -1,4 +1,3 @@
-
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { useAuth } from "./context/AuthContext.jsx";
@@ -113,11 +112,7 @@ function AuthScreen() {
     setVerificationRouteError("");
     clearAuthError();
 
-    window.history.pushState(
-      {},
-      "",
-      getAuthRoutePath(nextMode, resetToken),
-    );
+    window.history.pushState({}, "", getAuthRoutePath(nextMode, resetToken));
   }
 
   useEffect(() => {
@@ -175,7 +170,11 @@ function AuthScreen() {
     }
 
     if (isReset) {
-      if (!resetToken || resetToken.trim().length < 20) {
+      if (
+        !resetToken ||
+        resetToken.trim().length < 20 ||
+        resetToken.length > 200
+      ) {
         return "The password reset link is invalid or incomplete.";
       }
 
@@ -199,7 +198,10 @@ function AuthScreen() {
     clearAuthError();
 
     if (isVerify) {
-      if (verificationToken.trim().length < 20 || verificationToken.length > 200) {
+      if (
+        verificationToken.trim().length < 20 ||
+        verificationToken.length > 200
+      ) {
         setLocalError("Enter a valid email verification token.");
         return;
       }
@@ -238,9 +240,7 @@ function AuthScreen() {
         setVerificationToken("");
         changeMode("login");
 
-        setSuccessMessage(
-          "Your email has been verified. You can now sign in.",
-        );
+        setSuccessMessage("Your email has been verified. You can now sign in.");
       } else if (isForgot) {
         await requestPasswordReset(email.trim());
 
@@ -263,9 +263,7 @@ function AuthScreen() {
         );
       }
     } catch (error) {
-      setLocalError(
-        error.message || "Something went wrong. Please try again.",
-      );
+      setLocalError(error.message || "Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -313,9 +311,7 @@ function AuthScreen() {
         </div>
 
         {isRegister && label === "Password" && (
-          <p className="text-xs text-zinc-500">
-            Use at least 12 characters.
-          </p>
+          <p className="text-xs text-zinc-500">Use at least 12 characters.</p>
         )}
       </label>
     );
@@ -425,7 +421,7 @@ function AuthScreen() {
             </p>
           </div>
 
-          {(localError || authError) && (
+          {(localError || verificationRouteError || authError) && (
             <div
               role="alert"
               className="mb-5 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
@@ -451,11 +447,7 @@ function AuthScreen() {
                 disabled={submitting}
                 className="google-button"
               >
-                <svg
-                  viewBox="0 0 48 48"
-                  className="h-5 w-5"
-                  aria-hidden="true"
-                >
+                <svg viewBox="0 0 48 48" className="h-5 w-5" aria-hidden="true">
                   <path
                     fill="#EA4335"
                     d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.8 6.1C12.3 13.8 17.7 9.5 24 9.5Z"
@@ -474,7 +466,6 @@ function AuthScreen() {
                     d="M24 48c6.2 0 11.4-2 15.3-5.8l-7.8-6c-2.1 1.4-4.6 2.2-7.5 2.2-6.3 0-11.7-4.3-13.6-10.1l-7.8 6.1C6.5 42.6 14.6 48 24 48Z"
                   />
                 </svg>
-
                 Continue with Google
               </button>
 
@@ -508,14 +499,14 @@ function AuthScreen() {
               />
             ) : null}
 
-            {isLogin || isRegister ? (
-              renderPasswordField(
-                "Password",
-                password,
-                setPassword,
-                isRegister ? "new-password" : "current-password",
-              )
-            ) : null}
+            {isLogin || isRegister
+              ? renderPasswordField(
+                  "Password",
+                  password,
+                  setPassword,
+                  isRegister ? "new-password" : "current-password",
+                )
+              : null}
 
             {isVerify && (
               <InputField
@@ -535,8 +526,8 @@ function AuthScreen() {
                     role="alert"
                     className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-300"
                   >
-                    The reset token is missing. Open the complete password
-                    reset link from your email.
+                    The reset token is missing. Open the complete password reset
+                    link from your email.
                   </div>
                 )}
 
@@ -581,9 +572,7 @@ function AuthScreen() {
 
           {(isLogin || isRegister) && (
             <p className="mt-7 text-center text-sm text-zinc-400">
-              {isLogin
-                ? "Don't have an account?"
-                : "Already have an account?"}
+              {isLogin ? "Don't have an account?" : "Already have an account?"}
 
               <button
                 type="button"

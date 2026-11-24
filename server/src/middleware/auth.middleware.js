@@ -1,4 +1,3 @@
-
 import { prisma } from "../lib/prisma.js";
 import { ACCESS_TOKEN_COOKIE } from "../config/auth.js";
 import { verifyAccessToken } from "../utils/token.utils.js";
@@ -16,7 +15,8 @@ function unauthorized(res) {
 /**
  * Verifies the access token and its database-backed session.
  *
- * On success, attaches the authenticated identity to req.user.
+ * On success, attaches the authenticated identity and safe account
+ * metadata to req.user.
  */
 export async function authenticate(req, res, next) {
   const accessToken = req.cookies?.[ACCESS_TOKEN_COOKIE];
@@ -54,6 +54,7 @@ export async function authenticate(req, res, next) {
             role: true,
             status: true,
             emailVerifiedAt: true,
+            createdAt: true,
           },
         },
       },
@@ -65,10 +66,7 @@ export async function authenticate(req, res, next) {
 
     const user = session.user;
 
-    if (
-      user.status !== "ACTIVE" ||
-      !user.emailVerifiedAt
-    ) {
+    if (user.status !== "ACTIVE" || !user.emailVerifiedAt) {
       return unauthorized(res);
     }
 
@@ -77,6 +75,9 @@ export async function authenticate(req, res, next) {
       email: user.email,
       name: user.name,
       role: user.role,
+      status: user.status,
+      emailVerifiedAt: user.emailVerifiedAt,
+      createdAt: user.createdAt,
       sessionId: session.id,
     });
 

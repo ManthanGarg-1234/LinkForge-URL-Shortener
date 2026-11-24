@@ -1,4 +1,3 @@
-
 import {
   createContext,
   useCallback,
@@ -107,10 +106,7 @@ export function AuthProvider({ children }) {
       firebaseAuth = firebaseRuntime.firebaseAuth;
       signOut = firebaseRuntime.signOut;
 
-      if (
-        !firebaseRuntime.isFirebaseConfigured ||
-        !firebaseAuth
-      ) {
+      if (!firebaseRuntime.isFirebaseConfigured || !firebaseAuth) {
         throw new Error(
           "Google authentication is not configured. Check your Firebase environment variables.",
         );
@@ -210,6 +206,28 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const updateProfile = useCallback(async (payload) => {
+    setAuthError(null);
+
+    try {
+      const response = await authApi.updateProfile(payload);
+      const updatedUser = response?.data?.user;
+
+      if (!updatedUser) {
+        throw new Error(
+          "The server did not return the updated account profile.",
+        );
+      }
+
+      setUser(updatedUser);
+
+      return updatedUser;
+    } catch (error) {
+      setAuthError(error.message);
+      throw error;
+    }
+  }, []);
+
   const clearAuthError = useCallback(() => {
     setAuthError(null);
   }, []);
@@ -228,6 +246,7 @@ export function AuthProvider({ children }) {
       requestPasswordReset,
       resetPassword,
       refreshCurrentUser,
+      updateProfile,
       clearAuthError,
     }),
     [
@@ -242,15 +261,12 @@ export function AuthProvider({ children }) {
       requestPasswordReset,
       resetPassword,
       refreshCurrentUser,
+      updateProfile,
       clearAuthError,
     ],
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
